@@ -1,0 +1,15 @@
+# Generated output (the browser and CLI write these on demand)
+build/
+*.kicad_pcb
+*.stl
+*.scad
+*.gbr
+*.zip
+preview.json
+qmk_bundle.json
+padcraft_config.json
+
+# OS / editor noise
+.DS_Store
+*.swp
+node_modules/
