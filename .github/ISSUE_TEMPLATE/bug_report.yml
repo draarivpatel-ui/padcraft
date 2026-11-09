@@ -1,0 +1,63 @@
+name: Bug report
+description: Report a defect so it can be reproduced and fixed
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please fill in as much as you can. A
+        reproduction is the single most useful thing you can give us.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Describe the actual behaviour, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: The smallest sequence of steps, configuration, or script that shows the problem.
+      placeholder: |
+        1. Open ...
+        2. Set ... to ...
+        3. Run ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Browser and version, Node.js version, operating system, or consumer tool version if relevant.
+    validations:
+      required: false
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Engine or computation core
+        - User interface
+        - Exports or file output
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, source files, or reference values you compared against.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I ran the test suite and this is not already covered by a failing test
+          required: true
+        - label: This is not a security issue, which I will report privately instead
+          required: true
