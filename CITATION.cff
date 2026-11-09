@@ -1,0 +1,37 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "PadCraft"
+abstract: >-
+  A client-side EDA and mechanical CAD generator for RP2040 diode-matrix
+  macropads. Generates KiCad board files, Gerbers, STL plates, OpenSCAD, and
+  KMK or QMK firmware from a single clamped configuration.
+type: software
+license: MIT
+repository-code: "https://github.com/draarivpatel-ui/padcraft"
+url: "https://aariv.me/padcraft/"
+keywords:
+  - macropad
+  - keyboard
+  - cad
+  - eda
+  - kicad
+  - gerber
+  - kmk
+  - stl
+  - javascript
+  - zero-dependency
+authors:
+  - family-names: "Patel"
+    given-names: "Aariv"
+    alias: "draarivpatel-ui"
+preferred-citation:
+  type: software
+  title: "PadCraft"
+  version: "1.0.0"
+  date-released: "2026-11-08"
+  license: MIT
+  url: "https://aariv.me/padcraft/"
+  authors:
+    - family-names: "Patel"
+      given-names: "Aariv"
+      alias: "draarivpatel-ui"
