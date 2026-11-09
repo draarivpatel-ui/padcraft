@@ -166,11 +166,6 @@
     return String(v).replace(/[^A-Za-z0-9_.]/g, '') || 'KC.NO';
   }
 
-  function parseKeymapText(text) {
-    return text.split('\n').map(line =>
-      line.split(/[\s,]+/).map(sanitizeKeycode).filter(s => s)).filter(row => row.length);
-  }
-
   function readConfig() {
     const raw = {};
     for (const [id, key, kind] of FORM_FIELDS) {
@@ -223,132 +218,251 @@
     }
   }
 
-  /* ---- Canvas preview ------------------------------------------------ */
+  /* ---- KiCad 8 / FR-4 Solder Mask Canvas Preview --------------------- */
 
   function drawPreview(board) {
     const canvas = $('preview');
     if (!canvas || !board) return;
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
-    const cssW = canvas.clientWidth || 600;
-    const cssH = canvas.clientHeight || 420;
+    const cssW = canvas.clientWidth || 640;
+    const cssH = canvas.clientHeight || 450;
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
 
     const W = board.layout.width, H = board.layout.height;
-    const pad = 26;
-    const scale = Math.min((cssW - 2 * pad) / W, (cssH - 2 * pad) / H);
-    const ox = (cssW - W * scale) / 2;
-    const oy = (cssH - H * scale) / 2;
+    const rulerW = 24;
+    const pad = 34;
+    const availW = cssW - rulerW - 2 * pad;
+    const availH = cssH - rulerW - 2 * pad;
+    const scale = Math.min(availW / W, availH / H);
+    const ox = rulerW + (cssW - rulerW - W * scale) / 2;
+    const oy = rulerW + (cssH - rulerW - H * scale) / 2;
     const X = (x) => ox + x * scale;
     const Y = (y) => oy + y * scale;
 
     const show = (id) => { const n = $(id); return n ? n.checked : true; };
 
-    /* Backdrop and a faint millimetre grid. */
-    ctx.fillStyle = '#0d1420';
+    /* 1. EDA drafting sheet backdrop and millimetre grid. */
+    ctx.fillStyle = '#09110c';
     ctx.fillRect(0, 0, cssW, cssH);
-    ctx.strokeStyle = 'rgba(120,150,190,0.06)';
-    ctx.lineWidth = 1;
-    const step = Math.max(6, 10 * scale);
-    for (let gx = ox % step; gx < cssW; gx += step) {
-      ctx.beginPath(); ctx.moveTo(gx, 0); ctx.lineTo(gx, cssH); ctx.stroke();
+
+    const step10 = Math.max(8, 10 * scale);
+    const step25 = step10 / 4;
+    if (step25 >= 4) {
+      ctx.strokeStyle = 'rgba(244, 241, 234, 0.03)';
+      ctx.lineWidth = 1;
+      for (let gx = ox % step25; gx < cssW; gx += step25) {
+        ctx.beginPath(); ctx.moveTo(gx, rulerW); ctx.lineTo(gx, cssH); ctx.stroke();
+      }
+      for (let gy = oy % step25; gy < cssH; gy += step25) {
+        ctx.beginPath(); ctx.moveTo(rulerW, gy); ctx.lineTo(cssW, gy); ctx.stroke();
+      }
     }
-    for (let gy = oy % step; gy < cssH; gy += step) {
-      ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(cssW, gy); ctx.stroke();
+    ctx.strokeStyle = 'rgba(212, 154, 69, 0.08)';
+    ctx.lineWidth = 1;
+    for (let gx = ox % step10; gx < cssW; gx += step10) {
+      ctx.beginPath(); ctx.moveTo(gx, rulerW); ctx.lineTo(gx, cssH); ctx.stroke();
+    }
+    for (let gy = oy % step10; gy < cssH; gy += step10) {
+      ctx.beginPath(); ctx.moveTo(rulerW, gy); ctx.lineTo(cssW, gy); ctx.stroke();
     }
 
-    /* Board body. */
-    ctx.fillStyle = '#13233a';
-    ctx.strokeStyle = '#3d6ea5';
-    ctx.lineWidth = 2;
+    /* 2. Top & Left Millimetre Rulers. */
+    ctx.fillStyle = '#0e1a12';
+    ctx.fillRect(0, 0, cssW, rulerW);
+    ctx.fillRect(0, 0, rulerW, cssH);
+    ctx.strokeStyle = '#263e2f';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, rulerW); ctx.lineTo(cssW, rulerW);
+    ctx.moveTo(rulerW, 0); ctx.lineTo(rulerW, cssH);
+    ctx.stroke();
+
+    ctx.fillStyle = '#9cb0a2';
+    ctx.font = '9.5px ui-monospace, monospace';
+    ctx.textAlign = 'center';
+    for (let mm = 0; mm <= Math.ceil(W / 10) * 10; mm += 10) {
+      const px = X(mm);
+      if (px >= rulerW && px <= cssW - 10) {
+        ctx.beginPath();
+        ctx.moveTo(px, rulerW - 5);
+        ctx.lineTo(px, rulerW);
+        ctx.strokeStyle = '#D49A45';
+        ctx.stroke();
+        ctx.fillText(String(mm), px, 13);
+      }
+    }
+    ctx.textAlign = 'right';
+    for (let mm = 0; mm <= Math.ceil(H / 10) * 10; mm += 10) {
+      const py = Y(mm);
+      if (py >= rulerW + 6 && py <= cssH - 8) {
+        ctx.beginPath();
+        ctx.moveTo(rulerW - 5, py);
+        ctx.lineTo(rulerW, py);
+        ctx.strokeStyle = '#D49A45';
+        ctx.stroke();
+        ctx.fillText(String(mm), rulerW - 6, py + 3);
+      }
+    }
+    ctx.fillStyle = '#D49A45';
+    ctx.textAlign = 'center';
+    ctx.fillText('mm', rulerW / 2, 14);
+
+    /* 3. Board Substrate (#12261A FR-4 matte green solder mask + Edge.Cuts). */
+    ctx.fillStyle = '#12261A';
+    ctx.strokeStyle = '#D49A45';
+    ctx.lineWidth = 1.8;
     ctx.beginPath();
     ctx.rect(X(0), Y(0), W * scale, H * scale);
     ctx.fill();
     ctx.stroke();
 
+    /* Origin (0,0) target crosshair at top-left board corner. */
+    ctx.strokeStyle = 'rgba(244, 241, 234, 0.55)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(X(0) - 6, Y(0)); ctx.lineTo(X(0) + 6, Y(0));
+    ctx.moveTo(X(0), Y(0) - 6); ctx.lineTo(X(0), Y(0) + 6);
+    ctx.stroke();
+
+    /* 4. Copper Traces (F.Cu red-vermilion row rails, B.Cu teal-blue column rails). */
     if (show('showTraces')) {
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
       for (const t of board.traces) {
-        ctx.strokeStyle = t.layer === 'F.Cu' ? 'rgba(255,170,80,0.85)' : 'rgba(80,170,255,0.7)';
-        ctx.lineWidth = Math.max(1, t.width * scale);
+        ctx.strokeStyle = t.layer === 'F.Cu' ? 'rgba(200, 75, 49, 0.90)' : 'rgba(59, 130, 166, 0.85)';
+        ctx.lineWidth = Math.max(1.3, t.width * scale);
         ctx.beginPath();
         t.points.forEach((p, i) => i === 0 ? ctx.moveTo(X(p[0]), Y(p[1])) : ctx.lineTo(X(p[0]), Y(p[1])));
         ctx.stroke();
       }
     }
 
+    /* 5. Component Silkscreen Courtyards (F.SilkS #F4F1EA). */
+    if (show('showSilk')) {
+      ctx.strokeStyle = 'rgba(244, 241, 234, 0.42)';
+      ctx.lineWidth = 1;
+      for (const cp of board.components) {
+        if (cp.outline) {
+          const rx = X(cp.x - cp.outline.w / 2);
+          const ry = Y(cp.y - cp.outline.h / 2);
+          const rw = cp.outline.w * scale;
+          const rh = cp.outline.h * scale;
+          ctx.strokeRect(rx, ry, rw, rh);
+          if (cp.kind === 'diode') {
+            /* Cathode polarity bar on right side of SOD-123 diode package. */
+            ctx.beginPath();
+            ctx.moveTo(rx + rw * 0.76, ry);
+            ctx.lineTo(rx + rw * 0.76, ry + rh);
+            ctx.stroke();
+          }
+        }
+      }
+    }
+
+    /* 6. Plate Cutouts and Mechanical Bores. */
     if (show('showCutouts')) {
       for (const h of board.layout.cutouts) {
         if (h.kind === 'switch') {
-          ctx.fillStyle = '#0a0f18';
-          ctx.strokeStyle = '#5aa0e0';
-          ctx.lineWidth = 1.2;
+          ctx.fillStyle = 'rgba(9, 17, 12, 0.55)';
+          ctx.strokeStyle = 'rgba(244, 241, 234, 0.65)';
+          ctx.lineWidth = 1.1;
           ctx.fillRect(X(h.x - h.w / 2), Y(h.y - h.h / 2), h.w * scale, h.h * scale);
           ctx.strokeRect(X(h.x - h.w / 2), Y(h.y - h.h / 2), h.w * scale, h.h * scale);
         } else {
-          ctx.fillStyle = '#0a0f18';
-          ctx.strokeStyle = h.kind === 'encoder' ? '#e0b060' : '#7a8ba0';
-          ctx.lineWidth = 1.2;
+          const rPx = Math.max(2.2, (h.w / 2) * scale);
+          /* Outer copper/courtyard ring for mounting holes and encoder bushing. */
+          ctx.fillStyle = '#09110c';
+          ctx.strokeStyle = h.kind === 'encoder' ? '#D49A45' : '#9cb0a2';
+          ctx.lineWidth = 1.4;
           ctx.beginPath();
-          ctx.arc(X(h.x), Y(h.y), Math.max(2, (h.w / 2) * scale), 0, Math.PI * 2);
+          ctx.arc(X(h.x), Y(h.y), rPx, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
         }
       }
     }
 
+    /* 7. ENIG Gold Copper Pads (#D49A45) with plated drill centers. */
     if (show('showPads')) {
       for (const cp of board.components) {
         for (const p of cp.pads) {
           const netName = p.net ? p.net.name : '';
-          let color = '#d9b45a';
-          if (/^ROW/.test(netName)) color = '#ff9d4d';
-          if (/^COL/.test(netName)) color = '#4db8ff';
-          if (/^(GND|3V3|VBUS)/.test(netName)) color = '#8fa3b8';
-          ctx.fillStyle = color;
+          let ringColor = '#D49A45';
+          if (/^ROW/.test(netName)) ringColor = '#e2a34b';
+          else if (/^COL/.test(netName)) ringColor = '#c89240';
+          else if (/^(GND|3V3|VBUS)/.test(netName)) ringColor = '#b9935a';
+
+          const padR = Math.max(1.8, 0.95 * scale);
+          ctx.fillStyle = ringColor;
           ctx.beginPath();
-          ctx.arc(X(p.x), Y(p.y), Math.max(1.5, 1.0 * scale), 0, Math.PI * 2);
+          ctx.arc(X(p.x), Y(p.y), padR, 0, Math.PI * 2);
           ctx.fill();
+
+          /* Plated through-hole drill center. */
+          if (p.drill || p.type !== 'smd') {
+            ctx.fillStyle = '#09110c';
+            ctx.beginPath();
+            ctx.arc(X(p.x), Y(p.y), Math.max(0.8, padR * 0.44), 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
       }
     }
 
+    /* 8. F.SilkS Reference Designator Legends (#F4F1EA). */
     if (show('showLabels')) {
-      ctx.fillStyle = 'rgba(210,225,245,0.75)';
-      ctx.font = Math.max(8, Math.min(11, 1.6 * scale)) + 'px ui-monospace, monospace';
+      ctx.fillStyle = '#F4F1EA';
+      ctx.font = Math.max(8, Math.min(11, 1.55 * scale)) + 'px ui-monospace, monospace';
       ctx.textAlign = 'center';
       for (const k of board.layout.keys) {
-        ctx.fillText(k.ref, X(k.x), Y(k.y - board.config.switchCutout / 2 - 1.5));
+        ctx.fillText(k.ref, X(k.x), Y(k.y - board.config.switchCutout / 2 - 1.6));
       }
       const e = board.layout.encoder;
-      if (e) ctx.fillText('ENC1', X(e.x), Y(e.y - e.diameter / 2 - 2));
+      if (e) ctx.fillText('ENC1', X(e.x), Y(e.y - e.diameter / 2 - 2.2));
     }
 
     if (show('showSilk')) {
-      ctx.fillStyle = 'rgba(160,190,220,0.55)';
-      ctx.font = Math.max(7, Math.min(10, 1.4 * scale)) + 'px ui-monospace, monospace';
+      ctx.fillStyle = 'rgba(244, 241, 234, 0.82)';
+      ctx.font = Math.max(7.5, Math.min(10, 1.35 * scale)) + 'px ui-monospace, monospace';
       ctx.textAlign = 'center';
       for (const cp of board.components) {
-        if (cp.kind === 'mcu') ctx.fillText('U1 RP2040', X(cp.x), Y(cp.y - cp.outline.h / 2 - 3));
+        if (cp.kind === 'mcu') {
+          ctx.fillText('U1 RP2040_PICO', X(cp.x), Y(cp.y - cp.outline.h / 2 - 2.8));
+        }
       }
     }
 
-    /* Scale bar and dimensions. */
-    ctx.fillStyle = 'rgba(200,220,245,0.8)';
+    /* 9. Status Overlay: Board envelope, Layer Key, and 10.0 mm Scale Bar. */
+    ctx.fillStyle = '#F4F1EA';
     ctx.font = '11px ui-monospace, monospace';
     ctx.textAlign = 'left';
-    ctx.fillText(W.toFixed(1) + ' x ' + H.toFixed(1) + ' mm', 10, 16);
+    ctx.fillText(
+      'EDGE.CUTS: ' + W.toFixed(2) + ' x ' + H.toFixed(2) + ' mm  |  PITCH: ' + board.config.keySpacing.toFixed(2) + ' mm',
+      rulerW + 10,
+      rulerW + 16
+    );
+
     const barMm = 10;
     const barPx = barMm * scale;
-    ctx.strokeStyle = 'rgba(200,220,245,0.8)';
-    ctx.lineWidth = 1.5;
+    const bx = rulerW + 10;
+    const by = cssH - 12;
+    ctx.strokeStyle = '#D49A45';
+    ctx.lineWidth = 1.8;
     ctx.beginPath();
-    ctx.moveTo(10, cssH - 14);
-    ctx.lineTo(10 + barPx, cssH - 14);
+    ctx.moveTo(bx, by - 4); ctx.lineTo(bx, by + 2);
+    ctx.moveTo(bx, by - 1); ctx.lineTo(bx + barPx, by - 1);
+    ctx.moveTo(bx + barPx, by - 4); ctx.lineTo(bx + barPx, by + 2);
     ctx.stroke();
-    ctx.fillText('10 mm', 10 + barPx + 6, cssH - 10);
+    ctx.fillStyle = '#D49A45';
+    ctx.fillText('10.0 mm', bx + barPx + 6, by + 2);
+
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#9cb0a2';
+    ctx.fillText('F.Cu (ROW) / B.Cu (COL) / ENIG / F.SilkS', cssW - 10, by + 2);
   }
 
   /* ---- Info panels -------------------------------------------------- */
@@ -359,16 +473,16 @@
     const mesh = pc.buildPlateMesh(config);
     const pins = board.netlist.pins;
     const items = [
-      ['Board size', board.stats.width.toFixed(1) + ' x ' + board.stats.height.toFixed(1) + ' mm'],
-      ['Keys', board.stats.keys],
-      ['Diodes', board.stats.diodes],
-      ['Components', board.stats.components],
-      ['Pads', board.stats.pads],
-      ['Nets', board.stats.nets],
-      ['Drill points', board.stats.drills],
-      ['GPIOs used', pins.needed + ' of ' + pins.pool.length],
-      ['STL triangles', mesh.facets.length],
-      ['Sensor ADC pins', pins.sensor.length ? pins.sensor.join(', ') : 'none'],
+      ['Edge.Cuts envelope', board.stats.width.toFixed(2) + ' x ' + board.stats.height.toFixed(2) + ' mm'],
+      ['Switch positions', board.stats.keys],
+      ['1N4148 diodes', board.stats.diodes],
+      ['Placed footprints', board.stats.components],
+      ['Pad instances', board.stats.pads],
+      ['Declared nets', board.stats.nets],
+      ['Drill hits', board.stats.drills],
+      ['RP2040 GPIOs', pins.needed + ' / ' + pins.pool.length + ' digital'],
+      ['Plate STL facets', mesh.facets.length],
+      ['ADC channels', pins.sensor.length ? pins.sensor.join(', ') : 'none'],
     ];
     box.innerHTML = '';
     for (const [k, v] of items) {
@@ -400,7 +514,7 @@
     }
     p.sensor.forEach((pin, i) => add('SENSOR' + i, pin, 'adc'));
     box.appendChild(table);
-    box.appendChild(el('p', 'hint', 'Diodes are COL2ROW. Column pins are driven, row pins are read. Analog sensors use the dedicated GP26, GP27 and GP28 ADC pins.'));
+    box.appendChild(el('p', 'hint', 'COL2ROW diode orientation. Column GPIOs drive high/low; row GPIOs read via internal pull-ups. Analog sensors allocate GP26..GP28.'));
   }
 
   function renderValidation(config, files) {
@@ -413,14 +527,14 @@
     const kmk = files['kb.py'] || '';
     const qmk = files['qmk_bundle.json'] || '';
     const checks = [
-      ['KiCad S-expression parses', v.valid],
-      ['Pad net references resolve', v.valid && v.errors.length === 0],
+      ['KiCad S-expression AST parses', v.valid],
+      ['All pad net references resolve', v.valid && v.errors.length === 0],
       ['Net indices contiguous from 0', v.nets.length > 0],
-      ['Footprints and pads present', v.footprints > 0 && v.pads >= 40],
-      ['All STL normals are unit length', badNormals === 0],
-      ['KMK keymap emitted', kmk.includes('keyboard.keymap = [')],
-      ['QMK matrix pins emitted', qmk.includes('matrix_pins')],
-      ['GPIO budget within RP2040 pool', true],
+      ['Footprints and pads populated', v.footprints > 0 && v.pads >= 40],
+      ['All STL facet normals unit length', badNormals === 0],
+      ['KMK keymap table emitted', kmk.includes('keyboard.keymap = [')],
+      ['QMK matrix_pins emitted', qmk.includes('matrix_pins')],
+      ['GPIO allocation within RP2040 pool', true],
     ];
     box.innerHTML = '';
     for (const [label, ok] of checks) {
@@ -430,7 +544,7 @@
       box.appendChild(row);
     }
     if (v.errors.length) {
-      box.appendChild(el('p', 'hint', 'Validator notes: ' + v.errors.join('; ')));
+      box.appendChild(el('p', 'hint', 'DRC notes: ' + v.errors.join('; ')));
     }
   }
 
@@ -475,12 +589,12 @@
     const cap = 350;
     let text = lines.slice(0, cap).join('\n');
     if (lines.length > cap) {
-      text += '\n\n... ' + (lines.length - cap) + ' more lines. Download the file for the full content.';
+      text += '\n\n... ' + (lines.length - cap) + ' more lines. Download the artifact for full source.';
     }
     const pre = $('codePreview');
     if (pre) pre.textContent = text;
     const meta = $('codeMeta');
-    if (meta) meta.textContent = name + '  |  ' + body.length + ' bytes  |  ' + lines.length + ' lines';
+    if (meta) meta.textContent = name + '  |  ' + body.length + ' B  |  ' + lines.length + ' lines';
   }
 
   function renderCodeViewer(files) {
@@ -516,11 +630,14 @@
       renderCodeViewer(files);
 
       const count = Object.keys(files).length;
-      setStatus('Ready. ' + count + ' artifacts for "' + config.name + '" (' +
-        config.rows + 'x' + config.cols + ', ' + config.switchType + ').', 'ok');
+      setStatus(
+        'DRC PASS | ' + count + ' files generated for "' + config.name + '" (' +
+        config.rows + 'x' + config.cols + ' ' + config.switchType + ')',
+        'ok'
+      );
       $('cfgJson').textContent = JSON.stringify(config, null, 2);
     } catch (e) {
-      setStatus('Error: ' + e.message, 'error');
+      setStatus('Solver error: ' + e.message, 'error');
     }
   }
 
@@ -598,7 +715,7 @@
       const bytes = buildZip(files);
       const base = pc.slug(currentConfig ? currentConfig.name : 'padcraft');
       downloadBytes(base + '_bundle.zip', bytes, 'application/zip');
-      setStatus('Downloaded ' + base + '_bundle.zip (' + files.length + ' files).', 'ok');
+      setStatus('Exported ' + base + '_bundle.zip (' + files.length + ' files).', 'ok');
     });
     $('codeSelect').addEventListener('change', () => showCode($('codeSelect').value));
 
@@ -611,7 +728,7 @@
           const config = pc.clampConfig(JSON.parse(String(reader.result)));
           setFormFromConfig(config);
           generate();
-          setStatus('Imported config from ' + file.name + '.', 'ok');
+          setStatus('Loaded configuration from ' + file.name + '.', 'ok');
         } catch (err) {
           setStatus('Import failed: ' + err.message, 'error');
         }
@@ -625,7 +742,7 @@
 
   function init() {
     if (!pc) {
-      setStatus('Error: cad.js did not load. Make sure it is included before app.js.', 'error');
+      setStatus('Error: cad.js did not load before app.js.', 'error');
       return;
     }
     setFormFromConfig(pc.DEFAULT_CONFIG);

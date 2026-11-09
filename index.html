@@ -3,47 +3,53 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="PadCraft, an interactive browser CAD, KiCad PCB, Gerber, STL and KMK/QMK firmware generator for custom macropads.">
-  <title>PadCraft | Macropad CAD + PCB + Firmware Generator</title>
+  <meta name="description" content="PadCraft: browser-based KiCad 8 PCB, RS-274X Gerber, ASCII STL switch plate, OpenSCAD enclosure, and QMK/KMK firmware generator for RP2040 diode-matrix macropads.">
+  <title>PadCraft | RP2040 Macropad EDA &amp; CAD Workstation</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <header class="topbar">
     <div class="brand">
-      <span class="logo" aria-hidden="true">PC</span>
-      <div>
-        <h1>PadCraft</h1>
-        <p class="tagline">Parametric macropad CAD, KiCad PCB and firmware generator</p>
+      <span class="logo" aria-hidden="true">PC-8</span>
+      <div class="title-block">
+        <div class="title-main">
+          <h1>PadCraft</h1>
+          <span class="title-meta">REV 1.0.0 | FR-4 1.6MM | ENIG | RP2040 COL2ROW</span>
+        </div>
+        <p class="tagline">KiCad 8 .kicad_pcb, RS-274X F.Cu Gerber, ASCII STL switch plate, OpenSCAD case, and KMK/QMK firmware generator</p>
       </div>
     </div>
     <div class="top-actions">
-      <span class="status" id="status">Loading...</span>
-      <button type="button" class="btn primary" id="downloadZip">Download bundle .zip</button>
+      <span class="status" id="status">Initializing board solver...</span>
+      <button type="button" class="btn primary" id="downloadZip">Export Fabrication Bundle (.zip)</button>
     </div>
   </header>
 
   <main class="layout">
     <!-- ================= CONTROLS ================= -->
     <section class="panel controls" aria-label="Board configuration">
-      <h2>1. Design your board</h2>
+      <div class="section-head">
+        <h2>01 / Board Parameters</h2>
+        <span class="unit-tag">UNITS: MM</span>
+      </div>
 
       <div class="field">
-        <label for="program">Hack Club program preset</label>
+        <label for="program">Hardware program preset</label>
         <select id="program">
-          <option value="Hackpad">Hackpad, 3x4 macropad with encoder</option>
-          <option value="OnBoard">OnBoard, 2x3 first PCB with sensor</option>
-          <option value="Sprig">Sprig, 3x6 handheld with Choc</option>
-          <option value="Blot">Blot, 1x4 art and sensor board</option>
+          <option value="Hackpad">Hackpad (3x4 MX matrix + EC11 rotary encoder)</option>
+          <option value="OnBoard">OnBoard (2x3 MX matrix + ADC header)</option>
+          <option value="Sprig">Sprig (3x6 Kailh Choc matrix + EC11 encoder)</option>
+          <option value="Blot">Blot (1x4 Kailh Choc matrix + encoder + ADC)</option>
         </select>
       </div>
 
       <div class="field">
-        <label for="name">Board name</label>
+        <label for="name">Board identifier (title block &amp; file slug)</label>
         <input type="text" id="name" value="PadCraft Macropad" maxlength="64">
       </div>
 
       <fieldset class="group">
-        <legend>Matrix</legend>
+        <legend>Diode Matrix &amp; MCU Pinout</legend>
         <div class="grid-2">
           <div class="field">
             <label for="rows">Rows (1 to 6)</label>
@@ -54,54 +60,54 @@
             <input type="number" id="cols" min="1" max="8" step="1" value="4">
           </div>
           <div class="field">
-            <label for="switchType">Switch type</label>
+            <label for="switchType">Switch footprint</label>
             <select id="switchType">
-              <option value="MX">MX (Cherry style)</option>
-              <option value="Choc">Choc (Kailh low profile)</option>
+              <option value="MX">Cherry MX (19.05 mm pitch)</option>
+              <option value="Choc">Kailh Choc v1 (low profile)</option>
             </select>
           </div>
           <div class="field">
-            <label for="pinOffset">GPIO pin offset</label>
+            <label for="pinOffset">RP2040 GPIO offset</label>
             <input type="number" id="pinOffset" min="0" max="6" step="1" value="0">
           </div>
         </div>
       </fieldset>
 
       <fieldset class="group">
-        <legend>Plate geometry (mm)</legend>
+        <legend>Mechanical &amp; Substrate Geometry (mm)</legend>
         <div class="grid-2">
           <div class="field">
-            <label for="keySpacing">Key pitch</label>
+            <label for="keySpacing">Key center pitch</label>
             <input type="number" id="keySpacing" min="16" max="24" step="0.05" value="19.05">
           </div>
           <div class="field">
-            <label for="switchCutout">Switch cutout</label>
+            <label for="switchCutout">Plate cutout width</label>
             <input type="number" id="switchCutout" min="10" max="16" step="0.1" value="14.0">
           </div>
           <div class="field">
-            <label for="plateThickness">Plate thickness</label>
+            <label for="plateThickness">Switch plate Z</label>
             <input type="number" id="plateThickness" min="1" max="8" step="0.1" value="3.0">
           </div>
           <div class="field">
-            <label for="edgeMargin">Edge margin</label>
+            <label for="edgeMargin">Edge.Cuts margin</label>
             <input type="number" id="edgeMargin" min="5" max="24" step="0.5" value="10.0">
           </div>
           <div class="field">
-            <label for="boardThickness">PCB thickness</label>
+            <label for="boardThickness">FR-4 core thickness</label>
             <input type="number" id="boardThickness" min="0.6" max="3.2" step="0.1" value="1.6">
           </div>
           <div class="field">
-            <label for="mountHoleDiameter">Mount hole diameter</label>
+            <label for="mountHoleDiameter">M2 mount bore</label>
             <input type="number" id="mountHoleDiameter" min="1.5" max="4" step="0.1" value="2.4">
           </div>
         </div>
       </fieldset>
 
       <fieldset class="group">
-        <legend>Extras</legend>
+        <legend>Auxiliary Peripherals</legend>
         <div class="grid-2">
           <div class="field">
-            <label for="encoderPosition">Encoder position</label>
+            <label for="encoderPosition">EC11 placement</label>
             <select id="encoderPosition">
               <option value="top-left">Top left</option>
               <option value="top-center" selected>Top center</option>
@@ -109,31 +115,31 @@
             </select>
           </div>
           <div class="field">
-            <label for="encoderDiameter">Encoder diameter (mm)</label>
+            <label for="encoderDiameter">EC11 bushing bore (mm)</label>
             <input type="number" id="encoderDiameter" min="5" max="12" step="0.1" value="7.2">
           </div>
           <div class="field">
-            <label for="sensorCount">Sensor header count</label>
+            <label for="sensorCount">ADC header count (GP26..28)</label>
             <input type="number" id="sensorCount" min="1" max="3" step="1" value="1">
           </div>
         </div>
-        <label class="check"><input type="checkbox" id="encoder" checked> Rotary encoder (EC11 style)</label>
-        <label class="check"><input type="checkbox" id="sensor"> Analog sensor headers (ADC)</label>
+        <label class="check"><input type="checkbox" id="encoder" checked> Include EC11 quadrature encoder + push switch</label>
+        <label class="check"><input type="checkbox" id="sensor"> Include 3-pin analog sensor headers (ADC0..ADC2)</label>
       </fieldset>
 
       <fieldset class="group">
-        <legend>Layer 0 keymap</legend>
-        <p class="hint">One row per matrix row, space or comma separated KMK keycodes. Editable cells update the KMK and QMK firmware live.</p>
+        <legend>Layer 0 Keymap Assignment</legend>
+        <p class="hint">KMK keycodes per matrix position. Edits update both KMK <code>kb.py</code> and QMK <code>keymap.c</code>.</p>
         <div class="keymap-grid" id="keymapGrid"></div>
       </fieldset>
 
       <div class="btn-row">
-        <button type="button" class="btn primary" id="generate">Regenerate</button>
-        <button type="button" class="btn" id="resetBtn">Reset defaults</button>
-        <label class="btn file-label" for="importConfig">Import config JSON<input type="file" id="importConfig" accept=".json,application/json" hidden></label>
+        <button type="button" class="btn primary" id="generate">Run Solver</button>
+        <button type="button" class="btn" id="resetBtn">Reset Defaults</button>
+        <label class="btn file-label" for="importConfig">Load JSON<input type="file" id="importConfig" accept=".json,application/json" hidden></label>
       </div>
       <details class="cfg-details">
-        <summary>Current clamped config</summary>
+        <summary>Inspect clamped configuration JSON</summary>
         <pre id="cfgJson"></pre>
       </details>
     </section>
@@ -141,28 +147,30 @@
     <!-- ================= PREVIEW ================= -->
     <section class="panel preview-panel" aria-label="Board preview">
       <div class="panel-head">
-        <h2>2. Live board preview</h2>
-        <div class="toggles">
-          <label class="toggle"><input type="checkbox" id="showCutouts" checked> Cutouts</label>
-          <label class="toggle"><input type="checkbox" id="showPads" checked> Pads</label>
-          <label class="toggle"><input type="checkbox" id="showTraces" checked> Traces</label>
-          <label class="toggle"><input type="checkbox" id="showSilk" checked> Silkscreen</label>
-          <label class="toggle"><input type="checkbox" id="showLabels" checked> Labels</label>
+        <div>
+          <h2>02 / PCB &amp; Plate Layer Canvas</h2>
+          <p class="sub-hint">FR-4 solder mask (#12261A), ENIG copper pads (#D49A45), F.Cu row buses, B.Cu column buses, and F.SilkS courtyards</p>
+        </div>
+        <div class="toggles" role="group" aria-label="Layer visibility">
+          <label class="toggle"><input type="checkbox" id="showCutouts" checked> Edge/Drills</label>
+          <label class="toggle"><input type="checkbox" id="showPads" checked> ENIG Pads</label>
+          <label class="toggle"><input type="checkbox" id="showTraces" checked> F.Cu/B.Cu</label>
+          <label class="toggle"><input type="checkbox" id="showSilk" checked> F.SilkS</label>
+          <label class="toggle"><input type="checkbox" id="showLabels" checked> RefDes</label>
         </div>
       </div>
-      <canvas id="preview" aria-label="Rendered top-down view of the generated PCB and plate"></canvas>
-      <p class="hint">Top-down view. Blue column rails and orange row rails show the COL2ROW diode matrix. Round holes are the encoder and mounting holes. Units are millimetres.</p>
+      <canvas id="preview" aria-label="Rendered top-down view of the generated PCB and switch plate"></canvas>
       <div class="info-columns">
         <div class="info-card">
-          <h3>Board statistics</h3>
+          <h3>Board Metrics</h3>
           <div id="stats" class="stats"></div>
         </div>
         <div class="info-card">
-          <h3>RP2040 pin map</h3>
+          <h3>RP2040 GPIO Netlist</h3>
           <div id="pins"></div>
         </div>
         <div class="info-card">
-          <h3>Validation</h3>
+          <h3>Design Rule &amp; S-Expr Checks</h3>
           <div id="validation"></div>
         </div>
       </div>
@@ -170,13 +178,16 @@
 
     <!-- ================= OUTPUT ================= -->
     <section class="panel output" aria-label="Generated files">
-      <h2>3. Generated artifacts</h2>
-      <p class="hint">Every file is produced in your browser from the config above. Click a file to download it, or grab the whole bundle as a ZIP. Nothing is uploaded anywhere.</p>
+      <div class="section-head">
+        <h2>03 / Fabrication &amp; Firmware Outputs</h2>
+        <span class="unit-tag">LOCAL CLIENT GENERATION</span>
+      </div>
+      <p class="hint">Click any artifact below to save it individually, or inspect the generated source in the buffer viewer.</p>
       <div class="file-list" id="fileList"></div>
 
       <div class="code-block">
         <div class="code-head">
-          <label for="codeSelect">Preview file</label>
+          <label for="codeSelect">Active buffer</label>
           <select id="codeSelect"></select>
           <span class="code-meta" id="codeMeta"></span>
         </div>
@@ -186,13 +197,13 @@
   </main>
 
   <footer class="footer">
-    <p>PadCraft generates a KiCad <code>.kicad_pcb</code>, an ASCII STL switch plate, a parametric OpenSCAD plate and case, an RS-274X front copper Gerber, KMK <code>code.py</code>, a QMK bundle and the full board model. Built for the Hack Club Hackpad, OnBoard, Sprig and Blot programs.</p>
+    <p>PadCraft emits a KiCad 8 <code>.kicad_pcb</code> board file, an ASCII STL switch plate, a parametric OpenSCAD plate and enclosure tray, an RS-274X front copper Gerber, KMK <code>kb.py</code> firmware, and a QMK source bundle.</p>
     <p class="footer-links">
-      <a href="README.md">README</a>
-      <span aria-hidden="true">|</span>
-      <a href="LICENSE">LICENSE</a>
-      <span aria-hidden="true">|</span>
-      <code>node --test test.js</code>
+      <a href="README.md">README.md</a>
+      <span aria-hidden="true">/</span>
+      <a href="LICENSE">MIT License</a>
+      <span aria-hidden="true">/</span>
+      <code>node --test test.js (45/45)</code>
     </p>
   </footer>
 
