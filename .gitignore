@@ -4,10 +4,14 @@ build/
 *.stl
 *.scad
 *.gbr
+*.drl
 *.zip
 preview.json
 qmk_bundle.json
 padcraft_config.json
+verification.json
+kb.py
+qmk/
 
 # OS / editor noise
 .DS_Store

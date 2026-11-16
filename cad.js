@@ -105,32 +105,45 @@ function clamp(v, lo, hi) {
   return Math.min(hi, Math.max(lo, v));
 }
 
+function numeric(value, fallback) {
+  if (value === undefined || value === null || (typeof value === 'string' && value.trim() === '')) return fallback;
+  const result = Number(value);
+  return Number.isNaN(result) ? fallback : result;
+}
+
 function clampConfig(input) {
-  const c = Object.assign({}, DEFAULT_CONFIG, input || {});
-  c.name = String(c.name || DEFAULT_CONFIG.name).replace(/["\\]/g, '').slice(0, 64);
+  if (input !== undefined && input !== null && (typeof input !== 'object' || Array.isArray(input))) {
+    throw new TypeError('Configuration must be a JSON object.');
+  }
+  const base = { ...DEFAULT_CONFIG, ...applyProgram(input && input.program) };
+  const c = Object.fromEntries(Object.keys(DEFAULT_CONFIG).map(key =>
+    [key, input && Object.prototype.hasOwnProperty.call(input, key) ? input[key] : base[key]]));
+  c.name = String(c.name || DEFAULT_CONFIG.name).replace(/["\\*\x00-\x1f\x7f]/g, '').trim().slice(0, 64) || DEFAULT_CONFIG.name;
   if (!Object.prototype.hasOwnProperty.call(PROGRAMS, c.program)) c.program = 'Hackpad';
-  c.rows = Math.round(clamp(Number(c.rows) || 3, 1, 6));
-  c.cols = Math.round(clamp(Number(c.cols) || 4, 1, 8));
-  c.keySpacing = clamp(Number(c.keySpacing) || 19.05, 16, 24);
-  c.switchCutout = clamp(Number(c.switchCutout) || 14, 10, 16);
-  c.plateThickness = clamp(Number(c.plateThickness) || 3, 1, 8);
-  c.edgeMargin = clamp(Number(c.edgeMargin) || 10, 5, 24);
-  c.boardThickness = clamp(Number(c.boardThickness) || 1.6, 0.6, 3.2);
-  c.encoderDiameter = clamp(Number(c.encoderDiameter) || 7.2, 5, 12);
-  c.mountHoleDiameter = clamp(Number(c.mountHoleDiameter) || 2.4, 1.5, 4);
-  c.sensorCount = Math.round(clamp(Number(c.sensorCount) || 1, 1, 3));
-  c.pinOffset = Math.round(clamp(Number(c.pinOffset) || 0, 0, 6));
+  c.rows = Math.round(clamp(numeric(c.rows, 3), 1, 6));
+  c.cols = Math.round(clamp(numeric(c.cols, 4), 1, 8));
+  c.keySpacing = clamp(numeric(c.keySpacing, 19.05), 18, 24);
+  c.switchCutout = clamp(numeric(c.switchCutout, 14), 10, Math.min(16, c.keySpacing - 1));
+  c.plateThickness = clamp(numeric(c.plateThickness, 3), 1, 8);
+  c.edgeMargin = clamp(numeric(c.edgeMargin, 10), 5, 24);
+  c.boardThickness = clamp(numeric(c.boardThickness, 1.6), 0.6, 3.2);
+  c.encoderDiameter = clamp(numeric(c.encoderDiameter, 7.2), 5, 12);
+  c.mountHoleDiameter = clamp(numeric(c.mountHoleDiameter, 2.4), 1.5, 4);
+  c.sensorCount = Math.round(clamp(numeric(c.sensorCount, 1), 1, 3));
+  c.pinOffset = Math.round(clamp(numeric(c.pinOffset, 0), 0, 6));
   c.switchType = c.switchType === 'Choc' ? 'Choc' : 'MX';
-  c.encoder = !!c.encoder;
-  c.sensor = !!c.sensor;
+  const enabled = value => typeof value === 'string' ? /^(true|1|yes)$/i.test(value) : !!value;
+  c.encoder = enabled(c.encoder);
+  c.sensor = enabled(c.sensor);
   if (!['top-left', 'top-center', 'top-right'].includes(c.encoderPosition)) {
     c.encoderPosition = 'top-center';
   }
+  c.keymap = c.keymap === null ? null : normaliseKeymap(c);
   return c;
 }
 
 function applyProgram(program) {
-  const p = PROGRAMS[program];
+  const p = Object.prototype.hasOwnProperty.call(PROGRAMS, program) ? PROGRAMS[program] : null;
   return p ? { program, rows: p.rows, cols: p.cols, encoder: p.encoder,
                sensor: p.sensor, switchType: p.switchType } : {};
 }
@@ -152,17 +165,38 @@ function defaultKeymap(rows, cols) {
 function normaliseKeymap(config) {
   let km = config.keymap;
   if (!Array.isArray(km) || km.length === 0) return defaultKeymap(config.rows, config.cols);
-  const flat = Array.isArray(km[0]) ? km.slice(0, config.rows).map(r => r.slice(0, config.cols)) : null;
+  const flat = Array.isArray(km[0]) ? km.slice(0, config.rows).map(r => Array.isArray(r) ? r.slice(0, config.cols) : []) : null;
   if (flat) {
     return Array.from({ length: config.rows }, (_, r) =>
       Array.from({ length: config.cols }, (_, c) =>
-        String((flat[r] && flat[r][c]) || 'KC.NO')));
+        sanitizeKeycode((flat[r] && flat[r][c]) || 'KC.NO')));
   }
-  const list = km.map(String);
+  const list = km.map(sanitizeKeycode);
   let i = 0;
   return Array.from({ length: config.rows }, () =>
     Array.from({ length: config.cols }, () => list[i++] || 'KC.NO'));
 }
+
+function sanitizeKeycode(value) {
+  const key = String(value || '').trim().toUpperCase();
+  const qualified = key.startsWith('KC.') ? key : 'KC.' + key;
+  return /^KC\.[A-Z][A-Z0-9_]*$/.test(qualified) ? qualified : 'KC.NO';
+}
+
+function stableUuid(namespace, index) {
+  return '70616463-7261-4674-8' + String(namespace).padStart(3, '0') + '-' + String(index).padStart(12, '0');
+}
+
+const SHOWCASES = {
+  studio: { label: 'Studio control', description: '12 shortcuts, one volume dial, two copper layers.',
+    config: { ...DEFAULT_CONFIG, name: 'Studio Control', keymap: [['KC.MUTE', 'KC.VOLD', 'KC.VOLU', 'KC.MPLY'], ['KC.F1', 'KC.F2', 'KC.F3', 'KC.F4'], ['KC.LEFT', 'KC.DOWN', 'KC.UP', 'KC.RGHT']] } },
+  sensor: { label: 'Sensor console', description: 'Six keys and three dedicated analog channels.',
+    config: { ...DEFAULT_CONFIG, ...applyProgram('OnBoard'), name: 'Sensor Console', sensorCount: 3 } },
+  compact: { label: 'Pocket instrument', description: 'Eight low profile keys with a rotary dial.',
+    config: { ...DEFAULT_CONFIG, ...applyProgram('Sprig'), name: 'Pocket Instrument', rows: 2, cols: 4, keySpacing: 18 } },
+  sweep: { label: '48-key stress test', description: 'Maximum matrix, encoder and all ADC headers.',
+    config: { ...DEFAULT_CONFIG, name: 'Matrix 48', rows: 6, cols: 8, encoder: true, sensor: true, sensorCount: 3, pinOffset: 6 } },
+};
 
 function slug(s) {
   return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') || 'padcraft';
@@ -176,8 +210,11 @@ function computeLayout(config) {
   const c = clampConfig(config);
   const topBand = c.encoder ? 20 : 0;
   const bottomBand = c.sensor ? 16 : 0;
-  const width = 2 * c.edgeMargin + c.cols * c.keySpacing;
-  const height = 2 * c.edgeMargin + c.rows * c.keySpacing + topBand + bottomBand;
+  const keyWidth = 2 * c.edgeMargin + Math.max(c.cols * c.keySpacing, c.sensor ? (c.sensorCount + 1) * 9 : 0);
+  const controllerBay = 32;
+  const width = keyWidth + controllerBay;
+  const height = Math.max(2 * c.edgeMargin + c.rows * c.keySpacing + topBand + bottomBand,
+    55 + 2 * c.edgeMargin);
 
   const keys = [];
   for (let r = 0; r < c.rows; r++) {
@@ -193,8 +230,8 @@ function computeLayout(config) {
   let encoder = null;
   if (c.encoder) {
     const ex = c.encoderPosition === 'top-left' ? c.edgeMargin + 12
-      : c.encoderPosition === 'top-right' ? width - c.edgeMargin - 12
-      : width / 2;
+      : c.encoderPosition === 'top-right' ? keyWidth - c.edgeMargin - 12
+      : keyWidth / 2;
     encoder = { x: ex, y: topBand / 2 + 2, diameter: c.encoderDiameter };
   }
 
@@ -203,7 +240,7 @@ function computeLayout(config) {
     for (let i = 0; i < c.sensorCount; i++) {
       sensors.push({
         ref: 'J' + (i + 1),
-        x: c.edgeMargin + (i + 1) * (width - 2 * c.edgeMargin) / (c.sensorCount + 1),
+        x: c.edgeMargin + (i + 1) * (keyWidth - 2 * c.edgeMargin) / (c.sensorCount + 1),
         y: height - bottomBand / 2 - 1,
       });
     }
@@ -218,7 +255,7 @@ function computeLayout(config) {
   if (encoder) cutouts.push({ x: encoder.x, y: encoder.y, w: c.encoderDiameter, h: c.encoderDiameter, kind: 'encoder' });
   for (const m of mounts) cutouts.push({ x: m.x, y: m.y, w: c.mountHoleDiameter, h: c.mountHoleDiameter, kind: 'mount' });
 
-  return { config: c, width, height, topBand, bottomBand, keys, encoder, sensors, mounts, cutouts };
+  return { config: c, width, height, keyWidth, controllerBay, topBand, bottomBand, keys, encoder, sensors, mounts, cutouts };
 }
 
 function buildPinAssignment(config) {
@@ -310,21 +347,22 @@ function buildBoard(config) {
   const drillPoints = [];
   const silk = [];
 
-  const pushDrill = (x, y, d) => drillPoints.push({ x, y, diameter: d });
+  const pushDrill = (x, y, d, plated) => drillPoints.push({ x, y, diameter: d, plated: !!plated });
 
   /* Switch footprints. Offsets follow a Cherry MX / Kailh Choc switch body. */
   for (const k of layout.keys) {
     const a = netlist.assignments.find(as => as.row === k.row && as.col === k.col);
-    const pads = [
-      { num: '1', x: k.x - 3.81, y: k.y + 2.54, shape: 'circle', w: 2.0, h: 2.0, drill: 1.0, net: net(a.colNet) },
-      { num: '2', x: k.x + 2.54, y: k.y + 5.08, shape: 'circle', w: 2.0, h: 2.0, drill: 1.0, net: net(a.keyNet) },
-    ];
+    const electricalOffsets = c.switchType === 'Choc' ? [[0, 5.9], [5, 3.8]] : [[-3.81, 2.54], [2.54, 5.08]];
+    const pads = electricalOffsets.map((offset, i) => ({ num: String(i + 1),
+      x: k.x + offset[0], y: k.y + offset[1], shape: 'circle', w: 2, h: 2,
+      drill: 1, net: net(i === 0 ? a.colNet : a.keyNet) }));
+    const supportOffset = c.switchType === 'Choc' ? 5.5 : 5.08;
     const npth = [
-      { num: 'NP1', x: k.x - 5.08, y: k.y + 0.0, drill: 1.7 },
-      { num: 'NP2', x: k.x + 5.08, y: k.y + 0.0, drill: 1.7 },
-      { num: 'NP3', x: k.x + 0.0, y: k.y + 0.0, drill: 4.0 },
+      { num: '', x: k.x - supportOffset, y: k.y, drill: c.switchType === 'Choc' ? 1.9 : 1.7 },
+      { num: '', x: k.x + supportOffset, y: k.y, drill: c.switchType === 'Choc' ? 1.9 : 1.7 },
+      { num: '', x: k.x, y: k.y, drill: c.switchType === 'Choc' ? 3.4 : 4 },
     ];
-    for (const p of pads) pushDrill(p.x, p.y, p.drill);
+    for (const p of pads) pushDrill(p.x, p.y, p.drill, true);
     for (const p of npth) pushDrill(p.x, p.y, p.drill);
     components.push({
       ref: k.ref, value: 'SW_' + c.switchType.toUpperCase(), x: k.x, y: k.y,
@@ -334,10 +372,10 @@ function buildBoard(config) {
     });
   }
 
-  /* One series diode per key, placed just below and right of the switch. */
+  /* One series diode per key, placed in the gap above its switch. */
   for (const k of layout.keys) {
     const a = netlist.assignments.find(as => as.row === k.row && as.col === k.col);
-    const dx = k.x + 7.2, dy = k.y - 7.4;
+    const dx = k.x + 6, dy = k.y - c.keySpacing / 2;
     const pads = [
       { num: '1', x: dx - 1.65, y: dy, shape: 'roundrect', w: 1.2, h: 1.6, drill: 0, net: net(a.keyNet) },
       { num: '2', x: dx + 1.65, y: dy, shape: 'roundrect', w: 1.2, h: 1.6, drill: 0, net: net(a.rowNet) },
@@ -352,38 +390,55 @@ function buildBoard(config) {
 
   /* Column and row copper rails, used by the Gerber writer and the preview. */
   for (let col = 0; col < c.cols; col++) {
-    const x = layout.keys.find(k => k.col === col).x - 3.81;
-    const ys = layout.keys.filter(k => k.col === col).map(k => k.y + 2.54);
-    const top = Math.min.apply(null, ys) - c.keySpacing / 2;
-    const bottom = Math.max.apply(null, ys) + c.keySpacing / 2;
+    const columnPads = components.filter(cp => cp.kind === 'switch').map(cp => cp.pads[0])
+      .filter((pad, i) => i % c.cols === col);
+    const x = columnPads[0].x - (c.switchType === 'Choc' ? 3 : 0);
+    const ys = columnPads.map(p => p.y);
+    const top = Math.min(...ys) - 3;
+    const bottom = Math.max(...ys) + 3;
     traces.push({ net: 'COL' + col, layer: 'B.Cu', width: 0.25,
       points: [[x, top], [x, bottom]] });
+    for (const p of columnPads) if (p.x !== x) traces.push({ net: 'COL' + col, layer: 'B.Cu', width: 0.25,
+      points: [[p.x, p.y], [x, p.y]] });
   }
   for (let r = 0; r < c.rows; r++) {
-    const y = layout.keys.find(k => k.row === r).y + 11;
-    const xs = layout.keys.filter(k => k.row === r).map(k => k.x + 7.2 + 1.65);
+    const y = layout.keys.find(k => k.row === r).y - c.keySpacing / 2 - 1.5;
+    const xs = layout.keys.filter(k => k.row === r).map(k => k.x + 6 + 1.65);
     const left = Math.min.apply(null, xs) - c.keySpacing / 2;
-    const right = Math.max.apply(null, xs) + c.keySpacing / 2;
+    const right = Math.max.apply(null, xs);
     traces.push({ net: 'ROW' + r, layer: 'F.Cu', width: 0.25,
       points: [[left, y], [right, y]] });
+  }
+
+  for (const k of layout.keys) {
+    const assignment = netlist.assignments[k.row * c.cols + k.col];
+    const sw = components.find(cp => cp.ref === k.ref);
+    const diode = components.find(cp => cp.ref === assignment.diode);
+    const node = sw.pads[1], anode = diode.pads[0], cathode = diode.pads[1];
+    traces.push({ net: assignment.keyNet, layer: 'F.Cu', width: 0.25,
+      points: [[node.x, node.y], [k.x + 7, node.y], [k.x + 7, anode.y + 2], [anode.x, anode.y + 2], [anode.x, anode.y]] });
+    traces.push({ net: assignment.rowNet, layer: 'F.Cu', width: 0.25,
+      points: [[cathode.x, cathode.y], [cathode.x, k.y - c.keySpacing / 2 - 1.5]] });
   }
 
   /* Rotary encoder (EC11 style): A, B, common, plus a push switch. */
   if (layout.encoder) {
     const e = layout.encoder;
     const pads = [
-      { num: 'A', x: e.x - 3.0, y: e.y + 4.0, shape: 'circle', w: 1.8, h: 1.8, drill: 0.9, net: net('ENC_A') },
-      { num: 'B', x: e.x + 0.0, y: e.y + 4.0, shape: 'circle', w: 1.8, h: 1.8, drill: 0.9, net: net('ENC_B') },
-      { num: 'C', x: e.x + 3.0, y: e.y + 4.0, shape: 'circle', w: 1.8, h: 1.8, drill: 0.9, net: net('GND') },
-      { num: 'S1', x: e.x - 3.0, y: e.y - 4.0, shape: 'circle', w: 1.8, h: 1.8, drill: 0.9, net: net('ENC_SW') },
-      { num: 'S2', x: e.x + 3.0, y: e.y - 4.0, shape: 'circle', w: 1.8, h: 1.8, drill: 0.9, net: net('GND') },
+      { num: '1', x: e.x - 2.5, y: e.y + 7.5, shape: 'circle', w: 1.8, h: 1.8, drill: 1, net: net('ENC_A') },
+      { num: '3', x: e.x + 2.5, y: e.y + 7.5, shape: 'circle', w: 1.8, h: 1.8, drill: 1, net: net('ENC_B') },
+      { num: '2', x: e.x, y: e.y + 7.5, shape: 'circle', w: 1.8, h: 1.8, drill: 1, net: net('GND') },
+      { num: '4', x: e.x - 2.5, y: e.y - 7, shape: 'circle', w: 1.8, h: 1.8, drill: 1, net: net('ENC_SW') },
+      { num: '5', x: e.x + 2.5, y: e.y - 7, shape: 'circle', w: 1.8, h: 1.8, drill: 1, net: net('GND') },
     ];
-    for (const p of pads) pushDrill(p.x, p.y, p.drill);
-    pushDrill(e.x, e.y, 6.0);
+    for (const p of pads) pushDrill(p.x, p.y, p.drill, true);
+    const mountingSlots = [-5.6, 5.6].map(offset => ({ num: '', x: e.x + offset, y: e.y, drill: 2.1, w: 2.1, h: 2.8 }));
+    for (const slot of mountingSlots) drillPoints.push({ x: slot.x, y: slot.y, diameter: 2.1, plated: false,
+      slot: [[slot.x, slot.y - 0.35], [slot.x, slot.y + 0.35]] });
     components.push({
       ref: 'ENC1', value: 'RotaryEncoder_Alps_EC11E-Switch', x: e.x, y: e.y,
       lib: 'PadCraft:RotaryEncoder_EC11', kind: 'encoder',
-      pads, npth: [{ num: 'NP1', x: e.x, y: e.y, drill: 6.0 }],
+      pads, npth: mountingSlots,
       outline: { w: 12.0, h: 12.0, round: true },
       silk: [{ x: 0, y: -8.5, text: 'ENC1' }],
     });
@@ -397,7 +452,7 @@ function buildBoard(config) {
         { num: '2', x: s.x, y: s.y, shape: 'circle', w: 1.7, h: 1.7, drill: 0.9, net: net('SENSOR' + i) },
         { num: '3', x: s.x + 2.54, y: s.y, shape: 'circle', w: 1.7, h: 1.7, drill: 0.9, net: net('GND') },
       ];
-      for (const p of pads) pushDrill(p.x, p.y, p.drill);
+      for (const p of pads) pushDrill(p.x, p.y, p.drill, true);
       components.push({
         ref: s.ref, value: 'Conn_01x03', x: s.x, y: s.y,
         lib: 'PadCraft:Conn_01x03', kind: 'sensor',
@@ -409,14 +464,14 @@ function buildBoard(config) {
 
   /* RP2040 module, drawn as a Raspberry Pi Pico 2x20 header footprint. */
   const picoW = 21.0, picoH = 51.0;
-  const picoX = layout.width / 2;
-  const picoY = layout.height - (c.sensor ? layout.bottomBand : 0) - c.edgeMargin / 2 - 4 - picoH / 2 - 12;
+  const picoX = layout.keyWidth + layout.controllerBay / 2;
+  const picoY = layout.height / 2;
   const picoPads = [];
   for (let i = 0; i < 40; i++) {
     const side = i < 20 ? -1 : 1;
     const rowOnSide = i < 20 ? i : 39 - i;
-    const py = picoY - picoH / 2 + 3.2 + rowOnSide * 2.54;
-    const px = picoX + side * (picoW / 2 - 1.6);
+    const py = picoY - 19 * 2.54 / 2 + rowOnSide * 2.54;
+    const px = picoX + side * 8.89;
     const signal = PICO_PINOUT[i];
     let pn = null;
     if (signal === 'GND' || signal === '3V3' || signal === 'VBUS' || signal === 'RUN' ||
@@ -427,7 +482,7 @@ function buildBoard(config) {
     }
     picoPads.push({ num: String(i + 1), x: px, y: py, shape: 'roundrect',
       w: 1.7, h: 1.7, drill: 0.9, net: pn, signal });
-    pushDrill(px, py, 0.9);
+    pushDrill(px, py, 0.9, true);
   }
   components.push({
     ref: 'U1', value: 'RP2040_Pico', x: picoX, y: picoY,
@@ -439,6 +494,7 @@ function buildBoard(config) {
   /* Board outline. */
   const edge = [[0, 0], [layout.width, 0], [layout.width, layout.height], [0, layout.height], [0, 0]];
   for (const m of layout.mounts) {
+    pushDrill(m.x, m.y, c.mountHoleDiameter, false);
     silk.push({ x: m.x, y: m.y - 4, text: 'M2' });
   }
 
@@ -480,13 +536,13 @@ function padSexpr(p, cx, cy) {
 function footprintSexpr(cp, index) {
   const padLines = cp.pads.map(p => padSexpr(p, cp.x, cp.y)).join('\n');
   const npthLines = (cp.npth || []).map(p =>
-    '      (pad "' + p.num + '" np_thru_hole circle' +
+    '      (pad "' + p.num + '" np_thru_hole ' + (p.w && p.h && p.w !== p.h ? 'oval' : 'circle') +
     '\n        (at ' + f(p.x - cp.x) + ' ' + f(p.y - cp.y) + ')' +
-    '\n        (size ' + f(p.drill) + ' ' + f(p.drill) + ')' +
-    '\n        (drill ' + f(p.drill) + ')' +
+    '\n        (size ' + f(p.w || p.drill) + ' ' + f(p.h || p.drill) + ')' +
+    '\n        (drill ' + (p.w && p.h && p.w !== p.h ? 'oval ' + f(p.w) + ' ' + f(p.h) : f(p.drill)) + ')' +
     '\n        (layers "*.Cu" "*.Mask")\n      )').join('\n');
-  const texts = (cp.silk || []).map(t =>
-    '      (fp_text reference "' + t.text + '" (at ' + f(t.x) + ' ' + f(t.y) + ')' +
+  const texts = (cp.silk || []).filter(t => t.text !== cp.ref).map(t =>
+    '      (fp_text user "' + t.text + '" (at ' + f(t.x) + ' ' + f(t.y) + ')' +
     ' (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))').join('\n');
   const outline = cp.outline
     ? '      (fp_rect (start ' + f(-cp.outline.w / 2) + ' ' + f(-cp.outline.h / 2) + ')' +
@@ -494,9 +550,9 @@ function footprintSexpr(cp, index) {
       ' (stroke (width 0.12) (type default)) (fill none) (layer "F.SilkS"))'
     : '';
   return '    (footprint "' + cp.lib + '" (layer "F.Cu")' +
-    '\n      (tstamp 00000000-0000-0000-0000-' + String(100000000000 + index).slice(-12) + ')' +
+    '\n      (uuid "' + stableUuid(1, index) + '")' +
     '\n      (at ' + f(cp.x) + ' ' + f(cp.y) + ')' +
-    '\n      (attr through_hole board_only exclude_from_pos_files exclude_from_bom)' +
+    '\n      (attr ' + (cp.pads.every(p => p.drill === 0) ? 'smd' : 'through_hole') + ')' +
     '\n      (fp_text reference "' + cp.ref + '" (at 0 -3) (layer "F.SilkS")' +
     ' (effects (font (size 1 1) (thickness 0.15))))' +
     '\n      (fp_text value "' + cp.value + '" (at 0 3) (layer "F.Fab")' +
@@ -515,16 +571,14 @@ function generateKiCadPcb(config) {
   L.push('(kicad_pcb');
   L.push('  (version 20240108)');
   L.push('  (generator "padcraft")');
-  L.push('  (generator_version "1.0")');
+  L.push('  (generator_version "2.0")');
   L.push('  (general');
   L.push('    (thickness ' + f(c.boardThickness) + ')');
-  L.push('    (legacy_teardrops no)');
   L.push('  )');
   L.push('  (paper "A4")');
   L.push('  (title_block');
   L.push('    (title "' + c.name + '")');
-  L.push('    (date "2026-01-01")');
-  L.push('    (rev "A")');
+  L.push('    (rev "B")');
   L.push('    (company "Hack Club ' + c.program + '")');
   L.push('    (comment 1 "Generated by PadCraft")');
   L.push('  )');
@@ -551,6 +605,7 @@ function generateKiCadPcb(config) {
   board.nets.names.forEach((n, i) => L.push('  (net ' + (i + 1) + ' "' + n + '")'));
 
   /* Copper rail segments as real track objects. */
+  let trackIndex = 0;
   for (const t of board.traces) {
     const ni = board.nets.index[t.net];
     for (let i = 0; i < t.points.length - 1; i++) {
@@ -561,7 +616,7 @@ function generateKiCadPcb(config) {
       L.push('    (width ' + f(t.width) + ')');
       L.push('    (layer "' + t.layer + '")');
       L.push('    (net ' + ni + ')');
-      L.push('    (tstamp 00000000-0000-0000-0000-000000000000)');
+      L.push('    (uuid "' + stableUuid(2, trackIndex++) + '")');
       L.push('  )');
     }
   }
@@ -574,13 +629,14 @@ function generateKiCadPcb(config) {
     L.push('    (end ' + f(b[0]) + ' ' + f(b[1]) + ')');
     L.push('    (stroke (width 0.1) (type default))');
     L.push('    (layer "Edge.Cuts")');
+    L.push('    (uuid "' + stableUuid(3, i) + '")');
     L.push('  )');
   }
   /* Mounting holes as NPTH pads in a board level footprint. */
   for (let i = 0; i < board.layout.mounts.length; i++) {
     const m = board.layout.mounts[i];
     L.push('  (footprint "PadCraft:MountingHole_2.2mm_M2" (layer "F.Cu")');
-    L.push('    (tstamp 00000000-0000-0000-0000-' + String(900000000000 + i).slice(-12) + ')');
+    L.push('    (uuid "' + stableUuid(4, i) + '")');
     L.push('    (at ' + f(m.x) + ' ' + f(m.y) + ')');
     L.push('    (attr board_only exclude_from_pos_files exclude_from_bom)');
     L.push('    (fp_text reference "H' + (i + 1) + '" (at 0 -3) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))');
@@ -675,49 +731,102 @@ function walk(form, fn) {
 function validateKiCadPcb(text) {
   const base = validateSexp(text);
   const errors = base.errors.slice();
-  if (!base.valid) return { valid: false, errors, nets: [], footprints: 0, pads: 0 };
-
-  const roots = base.forms;
-  if (roots.length !== 1) errors.push('Expected exactly one root form, found ' + roots.length);
-  const root = roots[0];
-  if (head(root) !== 'kicad_pcb') errors.push('Root form must be kicad_pcb, found ' + head(root));
-
-  /* Only (net ...) forms that are direct children of kicad_pcb are net
-   * declarations. The (net N "name") form inside a pad is a reference and
-   * must not be counted as a duplicate declaration. */
-  const declared = new Map();
-  for (const child of root) {
-    if (Array.isArray(child) && head(child) === 'net' && child.length >= 3 && child[1].type === 'atom') {
-      const idx = Number(child[1].value);
-      if (declared.has(idx)) errors.push('Duplicate net declaration for index ' + idx);
-      declared.set(idx, String(child[2].value));
-    }
+  const empty = () => ({ valid: false, errors, nets: [], footprints: 0, pads: 0, padEntries: [] });
+  if (!base.valid) return empty();
+  if (base.forms.length !== 1) errors.push('Expected exactly one root form, found ' + base.forms.length);
+  const root = base.forms[0];
+  if (head(root) !== 'kicad_pcb') {
+    errors.push('Root form must be kicad_pcb, found ' + head(root));
+    return empty();
   }
-  const refs = [];
+  const childOf = (form, name) => form.find(child => Array.isArray(child) && head(child) === name);
+  for (const section of ['version', 'generator', 'general', 'layers', 'setup']) {
+    if (!childOf(root, section)) errors.push('Missing required ' + section + ' section');
+  }
+  const version = childOf(root, 'version');
+  if (version && Number(version[1] && version[1].value) !== 20240108) errors.push('Expected KiCad 8 version 20240108');
+  const declared = new Map(), names = new Set();
+  for (const form of root) {
+    if (head(form) !== 'net') continue;
+    const index = Number(form[1] && form[1].value);
+    const name = form[2] && form[2].value;
+    if (!Number.isInteger(index) || index < 0 || typeof name !== 'string') {
+      errors.push('Invalid net declaration');
+      continue;
+    }
+    if (declared.has(index)) errors.push('Duplicate net declaration for index ' + index);
+    if (names.has(name)) errors.push('Duplicate net name ' + name);
+    declared.set(index, name);
+    names.add(name);
+  }
+  if (declared.get(0) !== '') errors.push('Missing the mandatory (net 0 "") declaration');
+  const indices = [...declared.keys()].sort((a, b) => a - b);
+  if (indices.some((value, index) => value !== index)) errors.push('Net indices are not contiguous from 0');
   let footprints = 0, pads = 0;
-  walk(root, (form) => {
-    const h = head(form);
-    if (h === 'footprint') footprints++;
-    if (h === 'pad') {
+  const padEntries = [];
+  const uuids = new Set(), references = new Set();
+  const coordinate = (form, name, count) => {
+    const found = childOf(form, name);
+    if (!found || found.length < count + 1 || found.slice(1, count + 1).some(atom => !Number.isFinite(Number(atom.value)))) {
+      errors.push('Invalid ' + head(form) + ' ' + name + ' coordinates');
+      return null;
+    }
+    return found.slice(1, count + 1).map(atom => Number(atom.value));
+  };
+  walk(root, form => {
+    const kind = head(form);
+    if (kind === 'uuid' || kind === 'tstamp') {
+      const id = form[1] && form[1].value;
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id || '')) errors.push('Invalid object UUID');
+      if (uuids.has(id)) errors.push('Duplicate object UUID ' + id);
+      uuids.add(id);
+    }
+    if (kind === 'footprint') {
+      footprints++;
+      coordinate(form, 'at', 2);
+      const refs = form.filter(child => head(child) === 'fp_text' && child[1] && child[1].value === 'reference');
+      if (refs.length !== 1) errors.push('Footprint must have exactly one reference text');
+      const ref = refs[0] && refs[0][2] && refs[0][2].value;
+      if (ref && references.has(ref)) errors.push('Duplicate component reference ' + ref);
+      if (ref) references.add(ref);
+      const origin = coordinate(form, 'at', 2);
+      for (const pad of form.filter(child => head(child) === 'pad' && child[2] && child[2].value !== 'np_thru_hole')) {
+        const at = coordinate(pad, 'at', 2), size = coordinate(pad, 'size', 2), net = childOf(pad, 'net');
+        if (origin && at && size) padEntries.push({ ref, number: pad[1] && pad[1].value,
+          x: origin[0] + at[0], y: origin[1] + at[1], width: size[0], height: size[1],
+          net: net && net[2] ? net[2].value : null });
+      }
+    }
+    if (kind === 'pad') {
       pads++;
-      for (const child of form) {
-        if (Array.isArray(child) && head(child) === 'net' && child[1]) refs.push(Number(child[1].value));
+      coordinate(form, 'at', 2);
+      const size = coordinate(form, 'size', 2);
+      if (size && size.some(value => value <= 0)) errors.push('Pad size must be positive');
+      const drill = childOf(form, 'drill');
+      if (drill) {
+        const oval = drill[1] && drill[1].value === 'oval';
+        const dimensions = drill.slice(oval ? 2 : 1, oval ? 4 : 2).map(atom => Number(atom.value));
+        if (dimensions.length !== (oval ? 2 : 1) || dimensions.some((dimension, i) => !Number.isFinite(dimension) || dimension <= 0 || (size && dimension > (oval ? size[i] : Math.min(...size))))) errors.push('Invalid pad drill diameter');
+      }
+    }
+    if (kind === 'segment') {
+      coordinate(form, 'start', 2); coordinate(form, 'end', 2);
+      const width = coordinate(form, 'width', 1);
+      if (width && width[0] <= 0) errors.push('Track width must be positive');
+      const layer = childOf(form, 'layer');
+      if (!layer || !['F.Cu', 'B.Cu'].includes(layer[1] && layer[1].value)) errors.push('Track must use a declared copper layer');
+    }
+    if (kind === 'pad' || kind === 'segment') {
+      const net = childOf(form, 'net');
+      if (net) {
+        const index = Number(net[1] && net[1].value);
+        if (!declared.has(index)) errors.push((kind === 'pad' ? 'Pad' : 'Track') + ' references undeclared net index ' + index);
+        if (net[2] && declared.get(index) !== net[2].value) errors.push('Pad net name does not match declaration at index ' + index);
       }
     }
   });
-  if (!declared.has(0)) errors.push('Missing the mandatory (net 0 "") declaration');
-  const indices = Array.from(declared.keys()).sort((a, b) => a - b);
-  for (let i = 0; i < indices.length; i++) {
-    if (indices[i] !== i) { errors.push('Net indices are not contiguous from 0'); break; }
-  }
-  for (const r of refs) {
-    if (!declared.has(r)) errors.push('Pad references undeclared net index ' + r);
-  }
-  return {
-    valid: errors.length === 0, errors,
-    nets: indices.map(i => ({ index: i, name: declared.get(i) })),
-    footprints, pads,
-  };
+  return { valid: errors.length === 0, errors,
+    nets: indices.map(index => ({ index, name: declared.get(index) })), footprints, pads, padEntries };
 }
 
 /* ===================================================================== *
@@ -726,15 +835,19 @@ function validateKiCadPcb(text) {
 
 /* Cross product of (b - a) and (c - a), normalised to unit length. */
 function computeNormal(a, b, c) {
-  const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2];
-  const vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
-  let nx = uy * vz - uz * vy;
-  let ny = uz * vx - ux * vz;
-  let nz = ux * vy - uy * vx;
-  const len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-  if (len === 0) return [0, 0, 0];
-  nx /= len; ny /= len; nz /= len;
-  return [nx, ny, nz];
+  if (![...a, ...b, ...c].every(Number.isFinite)) throw new TypeError('Triangle vertices must be finite.');
+  let u = b.map((value, i) => value - a[i]), v = c.map((value, i) => value - a[i]);
+  if (![...u, ...v].every(Number.isFinite)) {
+    const scale = Math.max(...a.map(Math.abs), ...b.map(Math.abs), ...c.map(Math.abs));
+    u = b.map((value, i) => value / scale - a[i] / scale);
+    v = c.map((value, i) => value / scale - a[i] / scale);
+  }
+  const uScale = Math.max(...u.map(Math.abs)), vScale = Math.max(...v.map(Math.abs));
+  if (uScale === 0 || vScale === 0) return [0, 0, 0];
+  u = u.map(value => value / uScale); v = v.map(value => value / vScale);
+  const cross = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const length = Math.hypot(...cross);
+  return length === 0 ? [0, 0, 0] : cross.map(value => value / length || 0);
 }
 
 /* Splits a quad into two triangles, recomputing a flat facet normal for each. */
@@ -745,76 +858,140 @@ function emitQuadTriangles(a, b, c, d) {
   ];
 }
 
-/*
- * Axis-aligned cell decomposition. Every cutout boundary becomes a grid
- * line, so solid cells are either fully inside or fully outside a cutout.
- * Top and bottom faces come from solid cells. Wall faces are emitted on any
- * cell edge whose neighbour is empty, which covers both hole walls and the
- * outer perimeter with one consistent rule.
- *
- * Round bores (encoder, mounting holes) are emitted as square openings here;
- * the OpenSCAD source uses true cylinders. See README.md.
- */
+/* Vertical slabs follow every hole vertex. Shared slab edges are split at
+ * every boundary event, including circular tangencies, so exported triangles
+ * have no T junctions. Circular bores use 48 chord segments. */
+function platePolygons(layout) {
+  return layout.cutouts.map(hole => {
+    if (hole.kind === 'switch') return [[hole.x - hole.w / 2, hole.y - hole.h / 2],
+      [hole.x + hole.w / 2, hole.y - hole.h / 2], [hole.x + hole.w / 2, hole.y + hole.h / 2],
+      [hole.x - hole.w / 2, hole.y + hole.h / 2]];
+    return Array.from({ length: 48 }, (_, i) => {
+      const angle = i * Math.PI * 2 / 48;
+      return [hole.x + hole.w / 2 * Math.cos(angle), hole.y + hole.h / 2 * Math.sin(angle)];
+    });
+  }).map(polygon => polygon.map(point => point.map(value => Math.round(value * 1e6) / 1e6)));
+}
+
+function polygonArea(polygon) {
+  return Math.abs(polygon.reduce((sum, point, i) => {
+    const next = polygon[(i + 1) % polygon.length];
+    return sum + point[0] * next[1] - next[0] * point[1];
+  }, 0) / 2);
+}
+
 function buildPlateMesh(config) {
-  const board = buildBoard(config);
-  const c = board.config;
-  const W = board.layout.width, H = board.layout.height, T = c.plateThickness;
-  const holes = board.layout.cutouts;
-
-  const xs = [0, W], ys = [0, H];
-  for (const h of holes) {
-    xs.push(h.x - h.w / 2, h.x + h.w / 2);
-    ys.push(h.y - h.h / 2, h.y + h.h / 2);
-  }
-  const uniq = (arr) => Array.from(new Set(arr.map(v => Math.round(v * 1e6) / 1e6)))
-    .filter(v => v >= -1e-6 && v <= Math.max(W, H) + 1e-6)
-    .sort((a, b) => a - b);
-  const X = uniq(xs.concat([W]));
-  const Y = uniq(ys.concat([H]));
-  if (X[0] !== 0) X.unshift(0);
-  if (Y[0] !== 0) Y.unshift(0);
-
-  const nx = X.length - 1, ny = Y.length - 1;
-  const solid = [];
-  for (let i = 0; i < nx; i++) {
-    solid[i] = [];
-    for (let j = 0; j < ny; j++) {
-      const cx = (X[i] + X[i + 1]) / 2, cy = (Y[j] + Y[j + 1]) / 2;
-      const inside = holes.some(h =>
-        cx > h.x - h.w / 2 && cx < h.x + h.w / 2 &&
-        cy > h.y - h.h / 2 && cy < h.y + h.h / 2);
-      solid[i][j] = !inside;
-    }
-  }
-
-  const facets = [];
-  const add = (q) => {
-    for (const t of emitQuadTriangles(q[0], q[1], q[2], q[3])) {
-      if (t.n[0] === 0 && t.n[1] === 0 && t.n[2] === 0) continue;
-      facets.push(t);
-    }
+  const c = clampConfig(config), layout = computeLayout(c);
+  const W = Math.round(layout.width * 1e6) / 1e6, H = Math.round(layout.height * 1e6) / 1e6;
+  const T = c.plateThickness, polygons = platePolygons(layout);
+  const round = value => Math.round(value * 1e6) / 1e6;
+  const edges = polygons.map(polygon => polygon.map((point, i) => [point, polygon[(i + 1) % polygon.length]]));
+  const X = [...new Set([0, W, ...polygons.flat().map(point => point[0])])].filter(x => x >= 0 && x <= W).sort((a, b) => a - b);
+  const yOn = (edge, x) => round(edge[0][1] + (edge[1][1] - edge[0][1]) * (x - edge[0][0]) / (edge[1][0] - edge[0][0]));
+  const yEvents = x => [...new Set([0, H, ...edges.flatMap(loop => loop.flatMap(edge => {
+    const lo = Math.min(edge[0][0], edge[1][0]), hi = Math.max(edge[0][0], edge[1][0]);
+    if (x < lo - 1e-9 || x > hi + 1e-9) return [];
+    return lo === hi ? [edge[0][1], edge[1][1]] : [yOn(edge, x)];
+  }))])].sort((a, b) => a - b);
+  const events = X.map(yEvents), facets = [];
+  const triangle = (a, b, c) => {
+    const n = computeNormal(a, b, c);
+    if (Math.hypot(...n) > 0) facets.push({ a, b, c, n });
   };
-  const isSolid = (i, j) => i >= 0 && i < nx && j >= 0 && j < ny && solid[i][j];
-
-  for (let i = 0; i < nx; i++) {
-    for (let j = 0; j < ny; j++) {
-      if (!solid[i][j]) continue;
-      const x0 = X[i], x1 = X[i + 1], y0 = Y[j], y1 = Y[j + 1];
-      /* Top face, outward normal +Z. */
-      add([[x0, y0, T], [x1, y0, T], [x1, y1, T], [x0, y1, T]]);
-      /* Bottom face, outward normal -Z. */
-      add([[x0, y0, 0], [x0, y1, 0], [x1, y1, 0], [x1, y0, 0]]);
-      /* Four vertical walls, only where the neighbour is empty. */
-      if (!isSolid(i - 1, j)) add([[x0, y0, 0], [x0, y0, T], [x0, y1, T], [x0, y1, 0]]); // -X
-      if (!isSolid(i + 1, j)) add([[x1, y0, 0], [x1, y1, 0], [x1, y1, T], [x1, y0, T]]); // +X
-      if (!isSolid(i, j - 1)) add([[x0, y0, 0], [x1, y0, 0], [x1, y0, T], [x0, y0, T]]); // -Y
-      if (!isSolid(i, j + 1)) add([[x0, y1, 0], [x0, y1, T], [x1, y1, T], [x1, y1, 0]]); // +Y
+  const quad = (a, b, c, d) => { triangle(a, b, c); triangle(a, c, d); };
+  let cells = 0;
+  for (let slab = 0; slab < X.length - 1; slab++) {
+    const x0 = X[slab], x1 = X[slab + 1], mid = (x0 + x1) / 2;
+    const intervals = edges.map(loop => loop.filter(edge => mid > Math.min(edge[0][0], edge[1][0]) && mid < Math.max(edge[0][0], edge[1][0]))
+      .map(edge => ({ edge, y: yOn(edge, mid) })).sort((a, b) => a.y - b.y)).filter(found => found.length >= 2)
+      .map(found => ({ lower: found[0].edge, upper: found[found.length - 1].edge, y: found[0].y })).sort((a, b) => a.y - b.y);
+    const limits = [{ lower: null, upper: intervals[0] && intervals[0].lower }];
+    intervals.forEach((interval, i) => limits.push({ lower: interval.upper, upper: intervals[i + 1] && intervals[i + 1].lower }));
+    for (const limit of limits) {
+      const bottom0 = limit.lower ? yOn(limit.lower, x0) : 0;
+      const bottom1 = limit.lower ? yOn(limit.lower, x1) : 0;
+      const top0 = limit.upper ? yOn(limit.upper, x0) : H;
+      const top1 = limit.upper ? yOn(limit.upper, x1) : H;
+      if ((top0 - bottom0) + (top1 - bottom1) < 1e-8) continue;
+      const points = [[x0, bottom0], [x1, bottom1],
+        ...events[slab + 1].filter(y => y > bottom1 && y < top1).map(y => [x1, y]), [x1, top1], [x0, top0],
+        ...events[slab].filter(y => y > bottom0 && y < top0).reverse().map(y => [x0, y])];
+      const clean = points.filter((point, i) => i === 0 || point[0] !== points[i - 1][0] || point[1] !== points[i - 1][1]);
+      const center = [clean.reduce((sum, point) => sum + point[0], 0) / clean.length,
+        clean.reduce((sum, point) => sum + point[1], 0) / clean.length];
+      for (let i = 0; i < clean.length; i++) {
+        const a = clean[i], b = clean[(i + 1) % clean.length];
+        triangle([...center, T], [...a, T], [...b, T]);
+        triangle([...center, 0], [...b, 0], [...a, 0]);
+      }
+      cells++;
     }
   }
-  return {
-    facets, width: W, height: H, thickness: T,
-    stats: { triangles: facets.length, cells: nx * ny, solidCells: solid.flat().filter(Boolean).length },
+  const wallLoop = (polygon, hole) => {
+    polygon.forEach((a, i) => {
+      const b = polygon[(i + 1) % polygon.length];
+      const cuts = [0, 1, ...X.filter(x => x > Math.min(a[0], b[0]) && x < Math.max(a[0], b[0])).map(x => (x - a[0]) / (b[0] - a[0]))].sort((a, b) => a - b);
+      for (let j = 0; j < cuts.length - 1; j++) {
+        const point = t => [round(a[0] + (b[0] - a[0]) * t), round(a[1] + (b[1] - a[1]) * t)];
+        const p = point(cuts[j]), q = point(cuts[j + 1]);
+        if (hole) quad([...p, 0], [...p, T], [...q, T], [...q, 0]);
+        else quad([...p, 0], [...q, 0], [...q, T], [...p, T]);
+      }
+    });
   };
+  wallLoop([[0, 0], [W, 0], [W, H], [0, H]], false);
+  polygons.forEach(polygon => wallLoop(polygon, true));
+  return { facets, width: W, height: H, thickness: T,
+    stats: { triangles: facets.length, cells, solidCells: cells, circularSegments: 48,
+      expectedVolume: (W * H - polygons.reduce((sum, polygon) => sum + polygonArea(polygon), 0)) * T } };
+}
+
+function inspectMesh(mesh) {
+  const edges = new Map();
+  let volume = 0, badNormals = 0;
+  const key = point => point.map(value => f(value, 6)).join(',');
+  for (const triangle of mesh.facets) {
+    const { a, b, c, n } = triangle;
+    if (!Number.isFinite(Math.hypot(...n)) || Math.abs(Math.hypot(...n) - 1) > 1e-6) badNormals++;
+    volume += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0]) + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6;
+    for (const [p, q] of [[a, b], [b, c], [c, a]]) {
+      const pk = key(p), qk = key(q), edge = pk < qk ? pk + '|' + qk : qk + '|' + pk;
+      const entry = edges.get(edge) || { count: 0, winding: 0 };
+      entry.count++; entry.winding += pk < qk ? 1 : -1; edges.set(edge, entry);
+    }
+  }
+  const badEdges = [...edges.values()].filter(edge => edge.count !== 2 || edge.winding !== 0).length;
+  const volumeError = Math.abs(volume - mesh.stats.expectedVolume);
+  return { valid: badNormals === 0 && badEdges === 0 && volume > 0 && volumeError < 0.01,
+    badNormals, badEdges, volume, expectedVolume: mesh.stats.expectedVolume, volumeError, triangles: mesh.facets.length };
+}
+
+function validateSTL(source, expectedVolume) {
+  const text = String(source).trim(), lines = text.split(/\r?\n/).map(line => line.trim()), errors = [], facets = [];
+  const start = /^solid ([a-zA-Z0-9_-]+)$/.exec(lines[0]);
+  if (!start || lines[lines.length - 1] !== 'endsolid ' + (start && start[1])) errors.push('STL solid names must match');
+  const vector = (line, prefix) => {
+    if (!line || !line.startsWith(prefix)) return null;
+    const values = line.slice(prefix.length).trim().split(/\s+/).map(Number);
+    return values.length === 3 && values.every(Number.isFinite) ? values : null;
+  };
+  for (let i = 1; i < lines.length - 1; i += 7) {
+    const n = vector(lines[i], 'facet normal '), a = vector(lines[i + 2], 'vertex '), b = vector(lines[i + 3], 'vertex '), c = vector(lines[i + 4], 'vertex ');
+    if (!n || !a || !b || !c || lines[i + 1] !== 'outer loop' || lines[i + 5] !== 'endloop' || lines[i + 6] !== 'endfacet') {
+      errors.push('Malformed STL facet at line ' + (i + 1)); continue;
+    }
+    const computed = computeNormal(a, b, c);
+    if (n.some((value, axis) => Math.abs(value - computed[axis]) > 1e-5)) errors.push('STL facet normal does not match winding');
+    facets.push({ a, b, c, n });
+  }
+  if (!facets.length) errors.push('STL has no triangles');
+  const mesh = inspectMesh({ facets, stats: { expectedVolume: Number.isFinite(expectedVolume) ? expectedVolume : 0 } });
+  if (!Number.isFinite(expectedVolume)) {
+    mesh.expectedVolume = mesh.volume; mesh.volumeError = 0;
+    mesh.valid = mesh.badNormals === 0 && mesh.badEdges === 0 && mesh.volume > 0;
+  }
+  if (!mesh.valid) errors.push('STL must be closed, consistently wound and have positive volume');
+  return { ...mesh, valid: errors.length === 0, errors };
 }
 
 function generateSTL(config) {
@@ -856,21 +1033,30 @@ function generateOpenSCAD(config) {
   L.push('mount_hole_d      = ' + f(c.mountHoleDiameter) + ';');
   L.push('has_encoder       = ' + (c.encoder ? 'true' : 'false') + ';');
   L.push('has_sensor        = ' + (c.sensor ? 'true' : 'false') + ';');
-  L.push('board_w           = ' + f(board.layout.width) + ';');
-  L.push('board_h           = ' + f(board.layout.height) + ';');
-  L.push('top_band          = ' + f(board.layout.topBand) + ';');
-  L.push('bottom_band       = ' + f(board.layout.bottomBand) + ';');
+  L.push('sensor_count      = ' + c.sensorCount + ';');
+  L.push('encoder_position  = "' + c.encoderPosition + '";');
+  L.push('controller_bay    = 32;');
+  L.push('top_band          = has_encoder ? 20 : 0;');
+  L.push('bottom_band       = has_sensor ? 16 : 0;');
+  L.push('key_area_w        = 2 * edge_margin + max(cols * key_spacing, has_sensor ? (sensor_count + 1) * 9 : 0);');
+  L.push('board_w           = key_area_w + controller_bay;');
+  L.push('board_h           = max(2 * edge_margin + rows * key_spacing + top_band + bottom_band, 55 + 2 * edge_margin);');
   L.push('case_wall         = 2.4;');
   L.push('case_floor        = 1.6;');
   L.push('case_height       = 12.0;');
   L.push('clearance         = 0.25;');
+  L.push('plate_ledge       = 1.2;');
+  L.push('assert(rows >= 1 && rows <= 6 && cols >= 1 && cols <= 8);');
+  L.push('assert(key_spacing >= 18 && key_spacing <= 24 && switch_cutout > 0 && switch_cutout < key_spacing);');
+  L.push('assert(edge_margin >= 5 && plate_thickness >= 1 && plate_thickness <= 8);');
   L.push('');
   L.push('// ---- Derived helpers --------------------------------------------');
   L.push('function key_x(col) = edge_margin + col * key_spacing + key_spacing / 2;');
   L.push('function key_y(row) = top_band + edge_margin + row * key_spacing + key_spacing / 2;');
+  L.push('function encoder_x() = encoder_position == "top-left" ? edge_margin + 12 : encoder_position == "top-right" ? key_area_w - edge_margin - 12 : key_area_w / 2;');
   L.push('');
   L.push('module switch_opening(x, y) {');
-  L.push('    // Square plate cutout, plus a shallow relief for the switch clips.');
+  L.push('    // Exact square plate opening.');
   L.push('    translate([x - switch_cutout / 2, y - switch_cutout / 2, -1])');
   L.push('        cube([switch_cutout, switch_cutout, plate_thickness + 2]);');
   L.push('}');
@@ -882,7 +1068,7 @@ function generateOpenSCAD(config) {
   L.push('');
   L.push('module mount_opening(x, y) {');
   L.push('    translate([x, y, -1])');
-  L.push('        cylinder(d = mount_hole_d, h = plate_thickness + 2, $fn = 32);');
+  L.push('        cylinder(d = mount_hole_d, h = plate_thickness + 2, $fn = 48);');
   L.push('}');
   L.push('');
   L.push('module plate() {');
@@ -891,8 +1077,7 @@ function generateOpenSCAD(config) {
   L.push('        for (r = [0 : rows - 1], c = [0 : cols - 1])');
   L.push('            switch_opening(key_x(c), key_y(r));');
   L.push('        if (has_encoder)');
-  L.push('            encoder_opening(' + f(board.layout.encoder ? board.layout.encoder.x : board.layout.width / 2) +
-         ', ' + f(board.layout.encoder ? board.layout.encoder.y : 10) + ');');
+  L.push('            encoder_opening(encoder_x(), top_band / 2 + 2);');
   L.push('        for (mx = [edge_margin / 2, board_w - edge_margin / 2],');
   L.push('             my = [edge_margin / 2 + top_band * 0.35, board_h - edge_margin / 2 - bottom_band * 0.35])');
   L.push('            mount_opening(mx, my);');
@@ -902,11 +1087,11 @@ function generateOpenSCAD(config) {
   L.push('module case_shell() {');
   L.push('    // A simple tray. The plate drops in from the top.');
   L.push('    difference() {');
-  L.push('        cube([board_w + 2 * case_wall, board_h + 2 * case_wall, case_height]);');
-  L.push('        translate([case_wall, case_wall, case_floor])');
-  L.push('            cube([board_w, board_h, case_height - case_floor + 1]);');
-  L.push('        translate([case_wall + clearance, case_wall + clearance, case_height - plate_thickness])');
-  L.push('            cube([board_w - 2 * clearance, board_h - 2 * clearance, plate_thickness + 1]);');
+  L.push('        cube([board_w + 2 * (case_wall + clearance), board_h + 2 * (case_wall + clearance), case_height]);');
+  L.push('        translate([case_wall + clearance + plate_ledge, case_wall + clearance + plate_ledge, case_floor])');
+  L.push('            cube([board_w - 2 * plate_ledge, board_h - 2 * plate_ledge, case_height - case_floor + 1]);');
+  L.push('        translate([case_wall, case_wall, case_height - plate_thickness])');
+  L.push('            cube([board_w + 2 * clearance, board_h + 2 * clearance, plate_thickness + 1]);');
   L.push('    }');
   L.push('}');
   L.push('');
@@ -919,7 +1104,7 @@ function generateOpenSCAD(config) {
   L.push('    case_shell();');
   L.push('} else {');
   L.push('    case_shell();');
-  L.push('    translate([case_wall, case_wall, case_height - plate_thickness]) plate();');
+  L.push('    translate([case_wall + clearance, case_wall + clearance, case_height - plate_thickness]) plate();');
   L.push('}');
   L.push('');
   return L.join('\n');
@@ -929,48 +1114,160 @@ function generateOpenSCAD(config) {
  * 8. Front copper Gerber (RS-274X)
  * ===================================================================== */
 
-function generateGerberFCu(config) {
-  const board = buildBoard(config);
-  const c = board.config;
-  const mm = (v) => Math.round(v * 1e6); // FSLAX26Y26, units 1e-6 mm
-  const L = [];
-  L.push('G04 PadCraft front copper layer *');
-  L.push('G04 Board: ' + c.name + ' *');
-  L.push('%FSLAX26Y26Y26*%');
-  L.push('%MOMM*%');
-  L.push('%LPD*%');
-  L.push('G01*');
-  /* Aperture D10: round pad flash. D11: thin trace. D12: board outline. */
-  L.push('%ADD10C,1.700000*%');
-  L.push('%ADD11C,0.250000*%');
-  L.push('%ADD12C,0.100000*%');
+const GERBER_LAYERS = {
+  'F.Cu': { suffix: 'F_Cu', fileFunction: 'Copper,L1,Top' },
+  'B.Cu': { suffix: 'B_Cu', fileFunction: 'Copper,L2,Bot' },
+  'F.Mask': { suffix: 'F_Mask', fileFunction: 'Soldermask,Top' },
+  'B.Mask': { suffix: 'B_Mask', fileFunction: 'Soldermask,Bot' },
+  'F.Paste': { suffix: 'F_Paste', fileFunction: 'Paste,Top' },
+  'F.SilkS': { suffix: 'F_SilkS', fileFunction: 'Legend,Top' },
+  'Edge.Cuts': { suffix: 'Edge_Cuts', fileFunction: 'Profile,NP' },
+};
 
-  const flashes = [];
-  for (const cp of board.components) {
-    for (const p of cp.pads) {
-      if (p.shape === 'roundrect' && p.drill === 0) continue; // SMD diodes live on F.Cu too, keep them
-      flashes.push([p.x, p.y]);
+function generateGerber(config, layer) {
+  if (!Object.prototype.hasOwnProperty.call(GERBER_LAYERS, layer)) throw new Error('Unknown Gerber layer ' + layer);
+  const board = buildBoard(config), apertures = new Map(), definitions = [], commands = [];
+  const mm = value => Math.round(value * 1e6);
+  const xy = point => 'X' + mm(point[0]) + 'Y' + mm(board.layout.height - point[1]);
+  const aperture = (shape, width, height, cornerRadius) => {
+    const key = shape + ':' + f(width, 6) + ':' + f(height, 6) + ':' + f(cornerRadius || 0, 6);
+    if (apertures.has(key)) return apertures.get(key);
+    const id = 10 + apertures.size;
+    apertures.set(key, id);
+    if (shape === 'roundrect') {
+      const radius = cornerRadius === undefined ? Math.min(width, height) * 0.25 : cornerRadius, macro = 'ROUNDRECT' + id;
+      const parts = ['21,1,' + f(width - 2 * radius, 6) + ',' + f(height, 6) + ',0,0,0',
+        '21,1,' + f(width, 6) + ',' + f(height - 2 * radius, 6) + ',0,0,0'];
+      for (const x of [-width / 2 + radius, width / 2 - radius]) for (const y of [-height / 2 + radius, height / 2 - radius]) {
+        parts.push('1,1,' + f(2 * radius, 6) + ',' + f(x, 6) + ',' + f(y, 6) + ',0');
+      }
+      definitions.push('%AM' + macro + '*' + parts.join('*') + '*%');
+      definitions.push('%ADD' + id + macro + '*%');
+    } else definitions.push('%ADD' + id + (shape === 'rect' ? 'R,' + f(width, 6) + 'X' + f(height, 6) : 'C,' + f(width, 6)) + '*%');
+    return id;
+  };
+  const path = (points, width) => {
+    commands.push('D' + aperture('circle', width, width) + '*');
+    points.forEach((point, i) => commands.push(xy(point) + (i ? 'D01*' : 'D02*')));
+  };
+  if (layer.endsWith('.Cu') || layer.endsWith('.Mask') || layer === 'F.Paste') {
+    for (const component of board.components) for (const pad of component.pads) {
+      if ((layer.startsWith('B.') && pad.drill === 0) || (layer === 'F.Paste' && pad.drill > 0)) continue;
+      const expansion = layer.endsWith('.Mask') ? 0.1 : 0;
+      commands.push('D' + aperture(pad.shape, pad.w + expansion * 2, pad.h + expansion * 2,
+        pad.shape === 'roundrect' ? Math.min(pad.w, pad.h) * 0.25 + expansion : undefined) + '*');
+      commands.push(xy([pad.x, pad.y]) + 'D03*');
+    }
+    if (layer.endsWith('.Cu')) for (const trace of board.traces) if (trace.layer === layer) path(trace.points, trace.width);
+  } else if (layer === 'Edge.Cuts') path(board.edge, 0.1);
+  else if (layer === 'F.SilkS') {
+    for (const component of board.components) {
+      const { x, y, outline } = component;
+      if (!outline) continue;
+      const w = outline.w / 2, h = outline.h / 2;
+      path([[x - w, y - h], [x + w, y - h], [x + w, y + h], [x - w, y + h], [x - w, y - h]], 0.12);
+      if (component.kind === 'diode') path([[x + w * 0.55, y - h], [x + w * 0.55, y + h]], 0.2);
     }
   }
-  for (const [x, y] of flashes) {
-    L.push('D10*');
-    L.push('X' + mm(x) + 'Y' + mm(y) + 'D03*');
+  return ['G04 PadCraft ' + layer + ' - ' + board.config.name + ' *',
+    'G04 Origin bottom-left; same coordinates in all Gerber and drill files *',
+    '%FSLAX36Y36*%', '%MOMM*%', '%TF.FileFunction,' + GERBER_LAYERS[layer].fileFunction + '*%',
+    '%TF.FilePolarity,' + (layer.endsWith('.Mask') ? 'Negative' : 'Positive') + '*%', '%LPD*%', 'G01*',
+    ...definitions, ...commands, 'M02*', ''].join('\n');
+}
+
+function generateGerberFCu(config) { return generateGerber(config, 'F.Cu'); }
+
+function validateGerber(source) {
+  const errors = [], text = String(source), apertures = new Map(), flashes = [], draws = [];
+  const macros = new Set([...text.matchAll(/%AM([A-Z0-9_]+)\*/g)].map(match => match[1]));
+  const macroDimensions = new Map();
+  for (const match of text.matchAll(/%AM([A-Z0-9_]+)\*([^%]+)\*%/g)) {
+    const parts = match[2].split('*').filter(Boolean).map(primitive => primitive.split(',').map(Number));
+    if (parts.length !== 6 || parts.filter(part => part[0] === 21).length !== 2 || parts.filter(part => part[0] === 1).length !== 4 || parts.some(part => part.some(value => !Number.isFinite(value)) || part[1] !== 1 || part[2] <= 0)) errors.push('Invalid rounded rectangle aperture macro');
+    else macroDimensions.set(match[1], [parts[1][2], parts[0][3]]);
   }
-  L.push('D11*');
-  for (const t of board.traces) {
-    if (t.layer !== 'F.Cu') continue;
-    for (let i = 0; i < t.points.length; i++) {
-      const [x, y] = t.points[i];
-      L.push('X' + mm(x) + 'Y' + mm(y) + (i === 0 ? 'D02*' : 'D01*'));
+  if (!text.includes('%FSLAX36Y36*%') || (text.match(/%FS/g) || []).length !== 1) errors.push('Expected one RS-274X 3:6 coordinate format');
+  if (!text.includes('%MOMM*%')) errors.push('Expected millimetre units');
+  if (!/M02\*\s*$/.test(text) || (text.match(/M02\*/g) || []).length !== 1) errors.push('Expected one M02 terminator');
+  for (const match of text.matchAll(/%ADD(\d+)(C|R|[A-Z][A-Z0-9_]*)(?:,([^*]+))?\*%/g)) {
+    const id = Number(match[1]), shape = match[2], dimensions = (match[3] || '').split('X').filter(Boolean).map(Number);
+    if (id < 10 || apertures.has(id)) errors.push('Invalid or duplicate aperture ' + id);
+    if ((shape === 'C' && dimensions.length !== 1) || (shape === 'R' && dimensions.length !== 2) || dimensions.some(value => !Number.isFinite(value) || value <= 0)) errors.push('Invalid aperture dimensions');
+    if (!['C', 'R'].includes(shape) && !macros.has(shape)) errors.push('Undefined aperture macro ' + shape);
+    apertures.set(id, { shape, kind: macros.has(shape) ? 'roundrect' : shape === 'C' ? 'circle' : 'rect',
+      dimensions: macroDimensions.get(shape) || dimensions });
+  }
+  let selected = null, previous = null;
+  for (const line of text.split(/\r?\n/)) {
+    const select = /^D(\d+)\*$/.exec(line);
+    if (select) { selected = Number(select[1]); if (!apertures.has(selected)) errors.push('Selected undeclared aperture ' + selected); }
+    const command = /^X(-?\d+)Y(-?\d+)D(0[123])\*$/.exec(line);
+    if (!command) {
+      if (/^X|^Y/.test(line)) errors.push('Malformed coordinate command');
+      continue;
+    }
+    const point = [Number(command[1]) / 1e6, Number(command[2]) / 1e6];
+    if (point.some(value => !Number.isFinite(value) || value < 0 || value >= 1000)) errors.push('Coordinate outside 3:6 range');
+    if (!apertures.has(selected)) errors.push('Coordinate uses undeclared aperture');
+    if (command[3] === '03') flashes.push({ point, aperture: selected });
+    if (command[3] === '01') {
+      if (!previous) errors.push('Draw without preceding move');
+      else draws.push({ start: previous, end: point, aperture: selected });
+    }
+    previous = point;
+  }
+  return { valid: errors.length === 0, errors, apertures: [...apertures.entries()], flashes, draws };
+}
+
+function generateExcellon(config, plated) {
+  const board = buildBoard(config), tools = new Map(), hits = board.drillPoints.filter(hit => hit.plated === !!plated);
+  for (const hit of hits) if (!tools.has(f(hit.diameter, 4))) tools.set(f(hit.diameter, 4), tools.size + 1);
+  const lines = ['M48', '; PadCraft ' + (plated ? 'plated' : 'non-plated') + ' drills',
+    ';FILE_FORMAT=3:4', 'METRIC,TZ', ...[...tools].map(([diameter, tool]) => 'T' + String(tool).padStart(2, '0') + 'C' + diameter), '%', 'G90', 'G05'];
+  for (const [diameter, tool] of tools) {
+    lines.push('T' + String(tool).padStart(2, '0'));
+    for (const hit of hits.filter(hit => f(hit.diameter, 4) === diameter)) {
+      const coordinate = point => 'X' + f(point[0], 4) + 'Y' + f(board.layout.height - point[1], 4);
+      lines.push(hit.slot ? coordinate(hit.slot[0]) + 'G85' + coordinate(hit.slot[1]) : coordinate([hit.x, hit.y]));
+      if (hit.slot) lines.push('G05');
     }
   }
-  L.push('D12*');
-  for (let i = 0; i < board.edge.length; i++) {
-    const [x, y] = board.edge[i];
-    L.push('X' + mm(x) + 'Y' + mm(y) + (i === 0 ? 'D02*' : 'D01*'));
+  lines.push('M30', '');
+  return lines.join('\n');
+}
+
+function validateExcellon(source) {
+  const errors = [], text = String(source), tools = new Map(), hits = [];
+  if (!/^M48\n/.test(text) || !text.includes('METRIC,TZ') || !/M30\s*$/.test(text)) errors.push('Invalid Excellon header, units or terminator');
+  if (!text.includes('\n%\nG90\n')) errors.push('Expected absolute coordinate body');
+  let selected = null;
+  for (const line of text.split(/\r?\n/)) {
+    const tool = /^T(\d+)(?:C(\d+(?:\.\d+)?))?$/.exec(line);
+    if (tool) {
+      const id = Number(tool[1]);
+      if (tool[2]) {
+        const diameter = Number(tool[2]);
+        if (!Number.isFinite(diameter) || diameter <= 0 || tools.has(id)) errors.push('Invalid drill tool');
+        tools.set(id, diameter);
+      } else { selected = id; if (!tools.has(id)) errors.push('Undeclared drill tool'); }
+    }
+    const slot = /^X(-?\d+(?:\.\d+)?)Y(-?\d+(?:\.\d+)?)G85X(-?\d+(?:\.\d+)?)Y(-?\d+(?:\.\d+)?)$/.exec(line);
+    if (slot) {
+      const endpoints = [[Number(slot[1]), Number(slot[2])], [Number(slot[3]), Number(slot[4])]];
+      if (!tools.has(selected) || endpoints.flat().some(value => !Number.isFinite(value) || value < 0)) errors.push('Invalid drill slot');
+      hits.push({ x: (endpoints[0][0] + endpoints[1][0]) / 2, y: (endpoints[0][1] + endpoints[1][1]) / 2,
+        diameter: tools.get(selected), tool: selected, slot: endpoints });
+      continue;
+    }
+    const point = /^X(-?\d+(?:\.\d+)?)Y(-?\d+(?:\.\d+)?)$/.exec(line);
+    if (point) {
+      const x = Number(point[1]), y = Number(point[2]);
+      if (!tools.has(selected) || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) errors.push('Invalid drill hit');
+      hits.push({ x, y, diameter: tools.get(selected), tool: selected });
+    } else if (/^[XY]/.test(line)) errors.push('Malformed drill coordinate');
   }
-  L.push('M02*');
-  return L.join('\n') + '\n';
+  return { valid: errors.length === 0, errors, tools: [...tools.entries()], hits };
 }
 
 /* ===================================================================== *
@@ -981,6 +1278,7 @@ function generateKMK(config) {
   const board = buildBoard(config);
   const c = board.config;
   const p = board.netlist.pins;
+  const hasMedia = !!p.encoder || board.keymap.flat().some(key => /KC\.(MUTE|VOLU|VOLD|MPLY|MSTP|MNXT|MPRV)$/.test(key));
   const L = [];
   L.push('# ' + c.name);
   L.push('# KMK firmware generated by PadCraft for Hack Club ' + c.program + '.');
@@ -994,12 +1292,14 @@ function generateKMK(config) {
   L.push('from kmk.kmk_keyboard import KMKKeyboard');
   L.push('from kmk.keys import KC');
   L.push('from kmk.scanners import DiodeOrientation');
+  if (hasMedia) L.push('from kmk.extensions.media_keys import MediaKeys');
   if (p.encoder) L.push('from kmk.modules.encoder import EncoderModule');
-  if (p.sensor.length) L.push('from kmk.modules.analog import AnalogModule');
+  if (p.sensor.length) L.push('import analogio');
   L.push('');
   L.push('keyboard = KMKKeyboard()');
+  if (hasMedia) L.push('keyboard.extensions.append(MediaKeys())');
   L.push('');
-  L.push('# Column pins are driven, row pins are read. Diodes face the rows.');
+  L.push('# Rows drive low; columns are read with pull-ups. Cathodes face rows.');
   L.push('keyboard.col_pins = (' + p.cols.map(x => 'board.' + x).join(', ') + (p.cols.length === 1 ? ',' : '') + ')');
   L.push('keyboard.row_pins = (' + p.rows.map(x => 'board.' + x).join(', ') + (p.rows.length === 1 ? ',' : '') + ')');
   L.push('keyboard.diode_orientation = DiodeOrientation.COL2ROW');
@@ -1026,6 +1326,9 @@ function generateKMK(config) {
     L.push('# Analog sensor inputs (RP2040 ADC pins).');
     L.push('# ' + p.sensor.join(', ') + ' map to nets ' +
       p.sensor.map((_, i) => 'SENSOR' + i).join(', ') + '.');
+    L.push('analog_inputs = (' + p.sensor.map(pin => 'analogio.AnalogIn(board.' + pin + ')').join(', ') + (p.sensor.length === 1 ? ',' : '') + ')');
+    L.push('def read_sensors():');
+    L.push('    return tuple(sensor.value / 65535 for sensor in analog_inputs)');
     L.push('');
   }
   L.push('if __name__ == "__main__":');
@@ -1050,20 +1353,20 @@ function generateQMK(config) {
   const info = {
     keyboard_name: c.name,
     manufacturer: 'PadCraft',
-    maintainer: 'Hack Club ' + c.program,
+    maintainer: 'draarivpatel-ui',
     processor: 'RP2040',
     bootloader: 'rp2040',
+    usb: { vid: '0xFEED', pid: '0x2040', device_version: '1.0.0' },
     diode_direction: 'COL2ROW',
     matrix_pins: { cols: p.cols.slice(), rows: p.rows.slice() },
     layouts: { [macro]: { layout } },
   };
   if (p.encoder) {
     info.encoder = { rotary: [{ pin_a: p.encoder.a, pin_b: p.encoder.b, resolution: 4 }] };
-    info.encoder.rotary[0].pin_push = p.encoder.sw;
   }
 
   const keymapRows = board.keymap.map(row =>
-    '        ' + row.map(k => k.replace(/^KC\./, 'KC_')).join(', ') + ',').join('\n');
+    '        ' + row.map(k => k.replace(/^KC\.N([0-9])$/, 'KC_$1').replace(/^KC\./, 'KC_')).join(', ')).join(',\n');
   const keymap = [
     '// QMK keymap generated by PadCraft for Hack Club ' + c.program + '.',
     '#include QMK_KEYBOARD_H',
@@ -1075,6 +1378,26 @@ function generateQMK(config) {
     '};',
     '',
   ].join('\n');
+
+  let hardware = '';
+  if (p.encoder) {
+    hardware = [
+      '#if defined(ENCODER_MAP_ENABLE)',
+      'const uint16_t PROGMEM encoder_map[][NUM_ENCODERS][NUM_DIRECTIONS] = {',
+      '    [0] = { ENCODER_CCW_CW(KC_VOLD, KC_VOLU) },',
+      '};', '#endif', '',
+      'void matrix_init_user(void) { setPinInputHigh(' + p.encoder.sw + '); }',
+      'void matrix_scan_user(void) {',
+      '    static bool raw = false, stable = false;',
+      '    static uint16_t changed_at = 0;',
+      '    bool pressed = !readPin(' + p.encoder.sw + ');',
+      '    if (pressed != raw) { raw = pressed; changed_at = timer_read(); }',
+      '    if (pressed != stable && timer_elapsed(changed_at) >= 5) {',
+      '        stable = pressed;',
+      '        if (pressed) register_code(KC_MUTE); else unregister_code(KC_MUTE);',
+      '    }', '}', '',
+    ].join('\n');
+  }
 
   const configH = [
     '// PadCraft generated config.h',
@@ -1091,29 +1414,206 @@ function generateQMK(config) {
     'MCU = RP2040',
     'BOOTLOADER = rp2040',
     'ENCODER_ENABLE = ' + (p.encoder ? 'yes' : 'no'),
+    'ENCODER_MAP_ENABLE = ' + (p.encoder ? 'yes' : 'no'),
+    'EXTRAKEY_ENABLE = yes',
     '',
   ].join('\n');
 
   return { 'keyboard.json': JSON.stringify(info, null, 2) + '\n',
-           'keymap.c': keymap, 'config.h': configH, 'rules.mk': rules };
+           'keymap.c': keymap + hardware, 'config.h': configH, 'rules.mk': rules };
 }
 
 /* ===================================================================== *
  * 10. Bundles and CLI
  * ===================================================================== */
 
+function distanceToSegment(point, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], length2 = dx * dx + dy * dy;
+  const t = length2 === 0 ? 0 : Math.max(0, Math.min(1, ((point[0] - a[0]) * dx + (point[1] - a[1]) * dy) / length2));
+  return Math.hypot(point[0] - a[0] - t * dx, point[1] - a[1] - t * dy);
+}
+
+function segmentsIntersect(a, b, c, d) {
+  const cross = (p, q, r) => (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0]);
+  const abC = cross(a, b, c), abD = cross(a, b, d), cdA = cross(c, d, a), cdB = cross(c, d, b);
+  if (abC * abD < 0 && cdA * cdB < 0) return true;
+  return [distanceToSegment(a, c, d), distanceToSegment(b, c, d), distanceToSegment(c, a, b), distanceToSegment(d, a, b)].some(distance => distance < 1e-7);
+}
+
+/* Conservative copper screening uses pad envelopes before native CAD DRC. */
+function distanceSegmentToPad(segment, pad) {
+  if (pad.shape === 'circle') return Math.max(0, distanceToSegment([pad.x, pad.y], segment.a, segment.b) - pad.w / 2);
+  const left = pad.x - pad.w / 2, right = pad.x + pad.w / 2;
+  const top = pad.y - pad.h / 2, bottom = pad.y + pad.h / 2;
+  const inside = point => point[0] >= left && point[0] <= right && point[1] >= top && point[1] <= bottom;
+  if (inside(segment.a) || inside(segment.b)) return 0;
+  const corners = [[left, top], [right, top], [right, bottom], [left, bottom]];
+  let distance = Infinity;
+  for (let index = 0; index < 4; index++) {
+    const a = corners[index], b = corners[(index + 1) % 4];
+    if (segmentsIntersect(segment.a, segment.b, a, b)) return 0;
+    distance = Math.min(distance, distanceToSegment(segment.a, a, b), distanceToSegment(segment.b, a, b), distanceToSegment(a, segment.a, segment.b), distanceToSegment(b, segment.a, segment.b));
+  }
+  return distance;
+}
+
+function inspectBoard(board) {
+  const issues = [], clearance = 0.2;
+  const pads = board.components.flatMap(component => component.pads.map(pad => ({ ...pad, ref: component.ref })));
+  const segments = board.traces.flatMap(trace => trace.points.slice(1).map((end, i) => ({ ...trace, a: trace.points[i], b: end })));
+  for (const pad of pads) {
+    if (pad.x - pad.w / 2 < 0 || pad.y - pad.h / 2 < 0 || pad.x + pad.w / 2 > board.layout.width || pad.y + pad.h / 2 > board.layout.height) issues.push(pad.ref + ' pad ' + pad.num + ' leaves board outline');
+    else if (Math.min(pad.x - pad.w / 2, pad.y - pad.h / 2, board.layout.width - pad.x - pad.w / 2, board.layout.height - pad.y - pad.h / 2) < clearance) issues.push(pad.ref + ' pad ' + pad.num + ' violates copper-to-edge clearance');
+  }
+  for (let i = 0; i < pads.length; i++) for (let j = i + 1; j < pads.length; j++) {
+    const a = pads[i], b = pads[j];
+    if (a.net && b.net && a.net.name === b.net.name) continue;
+    const dx = Math.max(0, Math.abs(a.x - b.x) - (a.w + b.w) / 2);
+    const dy = Math.max(0, Math.abs(a.y - b.y) - (a.h + b.h) / 2);
+    if (Math.hypot(dx, dy) < clearance - 1e-7) issues.push(a.ref + ' pad ' + a.num + ' and ' + b.ref + ' pad ' + b.num + ' copper envelopes conflict');
+  }
+  for (const drill of board.drillPoints) {
+    if (drill.x - drill.diameter / 2 < 0 || drill.y - drill.diameter / 2 < 0 || drill.x + drill.diameter / 2 > board.layout.width || drill.y + drill.diameter / 2 > board.layout.height) issues.push('Drill leaves board outline');
+  }
+  const nonPlated = board.drillPoints.filter(drill => !drill.plated);
+  for (const segment of segments) {
+    if (segment.points.some(point => point[0] < 0 || point[1] < 0 || point[0] > board.layout.width || point[1] > board.layout.height)) issues.push(segment.net + ' trace leaves board outline');
+    if ([segment.a, segment.b].some(point => Math.min(point[0], point[1], board.layout.width - point[0], board.layout.height - point[1]) < segment.width / 2 + clearance)) issues.push(segment.net + ' trace violates copper-to-edge clearance');
+    for (const pad of pads) {
+      if ((pad.net && pad.net.name === segment.net) || (pad.drill === 0 && segment.layer !== 'F.Cu')) continue;
+      const margin = segment.width / 2 + clearance;
+      if (Math.max(segment.a[0], segment.b[0]) + margin < pad.x - pad.w / 2 || Math.min(segment.a[0], segment.b[0]) - margin > pad.x + pad.w / 2 || Math.max(segment.a[1], segment.b[1]) + margin < pad.y - pad.h / 2 || Math.min(segment.a[1], segment.b[1]) - margin > pad.y + pad.h / 2) continue;
+      if (distanceSegmentToPad(segment, pad) < margin - 1e-7) issues.push(segment.net + ' trace conflicts with ' + pad.ref + ' pad ' + pad.num + ' copper');
+    }
+    for (const drill of nonPlated) {
+      const distance = drill.slot ? (segmentsIntersect(segment.a, segment.b, drill.slot[0], drill.slot[1]) ? 0 :
+        Math.min(distanceToSegment(segment.a, drill.slot[0], drill.slot[1]), distanceToSegment(segment.b, drill.slot[0], drill.slot[1]), distanceToSegment(drill.slot[0], segment.a, segment.b), distanceToSegment(drill.slot[1], segment.a, segment.b))) :
+        distanceToSegment([drill.x, drill.y], segment.a, segment.b);
+      if (distance < drill.diameter / 2 + segment.width / 2 + clearance - 1e-7) issues.push(segment.net + ' trace conflicts with non-plated drill');
+    }
+  }
+  for (let i = 0; i < segments.length; i++) for (let j = i + 1; j < segments.length; j++) {
+    const a = segments[i], b = segments[j];
+    if (a.net === b.net || a.layer !== b.layer) continue;
+    const distance = segmentsIntersect(a.a, a.b, b.a, b.b) ? 0 : Math.min(distanceToSegment(a.a, b.a, b.b), distanceToSegment(a.b, b.a, b.b), distanceToSegment(b.a, a.a, a.b), distanceToSegment(b.b, a.a, a.b));
+    if (distance < (a.width + b.width) / 2 + clearance - 1e-7) issues.push(a.net + ' and ' + b.net + ' copper traces conflict');
+  }
+  const airwires = [], nets = [];
+  let totalConnections = 0, remainingRoutes = 0;
+  for (const name of board.nets.names) {
+    const terminals = pads.filter(pad => pad.net && pad.net.name === name);
+    const traces = board.traces.filter(trace => trace.net === name);
+    const parent = Array.from({ length: terminals.length + traces.length }, (_, i) => i);
+    const root = index => { while (parent[index] !== index) { parent[index] = parent[parent[index]]; index = parent[index]; } return index; };
+    const join = (a, b) => { parent[root(a)] = root(b); };
+    const pathSegments = trace => trace.points.slice(1).map((end, i) => [trace.points[i], end]);
+    terminals.forEach((pad, i) => traces.forEach((trace, j) => {
+      if (pad.drill === 0 && trace.layer !== 'F.Cu') return;
+      if (pathSegments(trace).some(([a, b]) => distanceToSegment([pad.x, pad.y], a, b) < 1e-7)) join(i, terminals.length + j);
+    }));
+    for (let i = 0; i < traces.length; i++) for (let j = i + 1; j < traces.length; j++) {
+      if (traces[i].layer === traces[j].layer && pathSegments(traces[i]).some(([a, b]) => pathSegments(traces[j]).some(([c, d]) => segmentsIntersect(a, b, c, d)))) join(terminals.length + i, terminals.length + j);
+    }
+    const groups = new Map();
+    terminals.forEach((pad, i) => { const id = root(i); if (!groups.has(id)) groups.set(id, []); groups.get(id).push(pad); });
+    const sets = [...groups.values()];
+    const anchor = sets.find(set => set.some(pad => pad.ref === 'U1')) || sets[0];
+    for (const group of sets) {
+      if (group === anchor) continue;
+      let closest = null;
+      for (const a of anchor) for (const b of group) {
+        const distance = Math.hypot(a.x - b.x, a.y - b.y);
+        if (!closest || distance < closest.distance) closest = { net: name, a: [a.x, a.y], b: [b.x, b.y], distance, from: a.ref, to: b.ref };
+      }
+      if (closest) airwires.push(closest);
+    }
+    const needed = Math.max(0, sets.length - 1);
+    totalConnections += Math.max(0, terminals.length - 1); remainingRoutes += needed;
+    nets.push({ name, pads: terminals.length, groups: sets.length, remainingRoutes: needed });
+  }
+  return { geometryValid: issues.length === 0, issues: [...new Set(issues)], clearance,
+    remainingRoutes, totalConnections, connectedConnections: totalConnections - remainingRoutes,
+    continuityPercent: totalConnections ? Math.round((totalConnections - remainingRoutes) * 100 / totalConnections) : 100,
+    airwires, nets };
+}
+
+function verifyBundle(config, files) {
+  const c = clampConfig(config), board = buildBoard(c), pcbName = Object.keys(files).find(name => name.endsWith('.kicad_pcb'));
+  const kicad = validateKiCadPcb(files[pcbName] || '');
+  const stlName = Object.keys(files).find(name => name.endsWith('_plate.stl'));
+  const mesh = validateSTL(files[stlName] || '', buildPlateMesh(c).stats.expectedVolume);
+  const gerbers = Object.entries(files).filter(([name]) => name.endsWith('.gbr')).map(([name, body]) => ({ name, ...validateGerber(body) }));
+  const drills = Object.entries(files).filter(([name]) => name.endsWith('.drl')).map(([name, body]) => ({ name, ...validateExcellon(body) }));
+  const pads = board.components.flatMap(component => component.pads.map(pad => ({ ...pad, ref: component.ref })));
+  const pcbMatches = kicad.padEntries.length === pads.length && pads.every(pad => kicad.padEntries.some(actual => actual.ref === pad.ref && actual.number === pad.num && actual.net === (pad.net ? pad.net.name : null) && Math.abs(actual.x - pad.x) < 0.00011 && Math.abs(actual.y - pad.y) < 0.00011 && actual.width === pad.w && actual.height === pad.h));
+  const gerbersMatch = Object.entries(GERBER_LAYERS).every(([layer, data]) => {
+    const file = gerbers.find(file => file.name.endsWith('_' + data.suffix + '.gbr'));
+    if (!file || !file.valid) return false;
+    if (layer === 'Edge.Cuts') return file.flashes.length === 0 && file.draws.length === 4;
+    if (layer === 'F.SilkS') return file.flashes.length === 0 && file.draws.length > 0;
+    const expected = pads.filter(pad => !(layer.startsWith('B.') && pad.drill === 0) && !(layer === 'F.Paste' && pad.drill > 0));
+    const expansion = layer.endsWith('.Mask') ? 0.2 : 0;
+    const apertureMap = new Map(file.apertures);
+    return file.flashes.length === expected.length && expected.every(pad => file.flashes.some(flash => {
+      const aperture = apertureMap.get(flash.aperture);
+      const dimensions = aperture && aperture.dimensions;
+      return dimensions && Math.abs(flash.point[0] - pad.x) < 0.000002 && Math.abs(flash.point[1] - (board.layout.height - pad.y)) < 0.000002 &&
+        Math.abs(dimensions[0] - pad.w - expansion) < 0.000002 && (aperture.kind === 'circle' || Math.abs(dimensions[1] - pad.h - expansion) < 0.000002) && aperture.kind === pad.shape;
+    }));
+  });
+  const drillsMatch = [true, false].every(plated => {
+    const file = drills.find(file => file.name.endsWith(plated ? '_PTH.drl' : '_NPTH.drl'));
+    const expected = board.drillPoints.filter(drill => drill.plated === plated);
+    return file && file.valid && file.hits.length === expected.length && expected.every(drill => file.hits.some(hit => Math.abs(hit.x - drill.x) <= 0.000051 && Math.abs(hit.y - (board.layout.height - drill.y)) <= 0.000051 && Math.abs(hit.diameter - drill.diameter) < 1e-6 &&
+      (!drill.slot ? !hit.slot : hit.slot && drill.slot.every((point, i) => Math.abs(point[0] - hit.slot[i][0]) <= 0.000051 && Math.abs(board.layout.height - point[1] - hit.slot[i][1]) <= 0.000051))));
+  });
+  let firmwareMatches = false;
+  try {
+    const bundle = JSON.parse(files['qmk_bundle.json']), info = JSON.parse(bundle['keyboard.json']);
+    const expectedKeys = board.keymap.flat().map(key => key.replace(/^KC\.N([0-9])$/, 'KC_$1').replace(/^KC\./, 'KC_'));
+    const actualKeys = (bundle['keymap.c'].split('};')[0].match(/KC_[A-Z0-9_]+/g) || []);
+    const kmkBlock = /keyboard\.keymap\s*=\s*\[\s*\[([\s\S]*?)\]\s*,?\s*\]/.exec(files['kb.py']);
+    const kmkKeys = kmkBlock ? kmkBlock[1].match(/KC\.[A-Z][A-Z0-9_]*/g) || [] : [];
+    const base = slug(c.name);
+    const qmkSourcesMatch = Object.entries(bundle).every(([name, body]) => files['qmk/' + base + '/' + (name === 'keymap.c' ? 'keymaps/default/' : '') + name] === body);
+    firmwareMatches = JSON.stringify(info.matrix_pins.rows) === JSON.stringify(board.netlist.pins.rows) && JSON.stringify(info.matrix_pins.cols) === JSON.stringify(board.netlist.pins.cols) &&
+      info.diode_direction === 'COL2ROW' && JSON.stringify(actualKeys) === JSON.stringify(expectedKeys) && !/,\s*\)/.test(bundle['keymap.c']) &&
+      JSON.stringify(kmkKeys) === JSON.stringify(board.keymap.flat()) && files['kb.py'].includes('DiodeOrientation.COL2ROW') && qmkSourcesMatch;
+  } catch (_) { firmwareMatches = false; }
+  const checks = [
+    { label: 'KiCad 8 schema and net references', valid: kicad.valid && pcbMatches, detail: kicad.footprints + ' footprints, ' + kicad.pads + ' pads matched' },
+    { label: 'Closed STL topology and winding', valid: mesh.valid, detail: mesh.triangles + ' triangles, ' + mesh.badEdges + ' open or misoriented edges' },
+    { label: 'RS-274X layer round trip', valid: gerbers.length === Object.keys(GERBER_LAYERS).length && gerbersMatch, detail: gerbers.length + ' layers, pad positions and sizes matched' },
+    { label: 'Excellon drill round trip', valid: drills.length === 2 && drillsMatch, detail: board.drillPoints.length + ' hits, diameters and plating matched' },
+    { label: 'GPIO allocation is unique', valid: new Set(board.netlist.pins.usage.map(pin => pin.pin)).size === board.netlist.pins.usage.length, detail: board.netlist.pins.usage.length + ' assigned pins' },
+    { label: 'Firmware matrix and keymap match', valid: firmwareMatches, detail: board.stats.keys + ' keys in KMK and QMK' },
+    { label: 'Configuration round trip', valid: files['padcraft_config.json'] === JSON.stringify(c, null, 2) + '\n', detail: 'Normalized source matches exported snapshot' },
+  ];
+  return { valid: checks.every(check => check.valid), checks, kicad, mesh, geometry: inspectBoard(board),
+    gerbers: gerbers.map(layer => ({ name: layer.name, valid: layer.valid, flashes: layer.flashes.length, draws: layer.draws.length, errors: layer.errors })),
+    drills: drills.map(drill => ({ name: drill.name, valid: drill.valid, hits: drill.hits.length, errors: drill.errors })) };
+}
+
 function generateAll(config) {
-  const c = clampConfig(config);
-  const base = slug(c.name);
-  return {
+  const c = clampConfig(config), base = slug(c.name);
+  const files = {
     [base + '.kicad_pcb']: generateKiCadPcb(c),
     [base + '_plate.stl']: generateSTL(c),
     [base + '_plate.scad']: generateOpenSCAD(c),
-    [base + '_F_Cu.gbr']: generateGerberFCu(c),
+    ...Object.fromEntries(Object.entries(GERBER_LAYERS).map(([layer, data]) => [base + '_' + data.suffix + '.gbr', generateGerber(c, layer)])),
+    [base + '_PTH.drl']: generateExcellon(c, true),
+    [base + '_NPTH.drl']: generateExcellon(c, false),
     'kb.py': generateKMK(c),
     'qmk_bundle.json': JSON.stringify(generateQMK(c), null, 2) + '\n',
     'padcraft_config.json': JSON.stringify(c, null, 2) + '\n',
+    'preview.json': JSON.stringify(buildBoard(c), null, 2) + '\n',
   };
+  const qmk = generateQMK(c);
+  for (const [name, body] of Object.entries(qmk)) {
+    files['qmk/' + base + '/' + (name === 'keymap.c' ? 'keymaps/default/' : '') + name] = body;
+  }
+  files['verification.json'] = JSON.stringify(verifyBundle(c, files), null, 2) + '\n';
+  return files;
 }
 
 const CLI_HELP = [
@@ -1126,6 +1626,7 @@ const CLI_HELP = [
   '  stl       Write an ASCII STL switch plate',
   '  scad      Write a parametric OpenSCAD plate and case',
   '  gerber    Write an RS-274X front copper Gerber',
+  '  drill     Write a plated Excellon drill file',
   '  kmk       Write KMK firmware kb.py',
   '  qmk       Write a QMK bundle as JSON (keyboard.json, keymap.c, ...)',
   '  preview   Write the board model as JSON for custom renderers',
@@ -1185,8 +1686,10 @@ function loadConfig(args) {
     switchCutout: 'switchCutout', plateThickness: 'plateThickness',
     edgeMargin: 'edgeMargin', switchType: 'switchType', sensorCount: 'sensorCount',
     pinOffset: 'pinOffset', encoderPosition: 'encoderPosition',
-    encoderDiameter: 'encoderDiameter',
+    encoderDiameter: 'encoderDiameter', boardThickness: 'boardThickness', mountHoleDiameter: 'mountHoleDiameter',
   };
+  const aliases = { cutout: 'switchCutout', thickness: 'plateThickness', margin: 'edgeMargin' };
+  for (const [alias, target] of Object.entries(aliases)) if (args[alias] !== undefined && args[target] === undefined) args[target] = args[alias];
   for (const [argKey, cfgKey] of Object.entries(map)) {
     if (args[argKey] !== undefined) raw[cfgKey] = args[argKey];
   }
@@ -1197,7 +1700,7 @@ function loadConfig(args) {
     }
   }
   for (const numKey of ['rows', 'cols', 'keySpacing', 'switchCutout', 'plateThickness',
-    'edgeMargin', 'sensorCount', 'pinOffset', 'encoderDiameter']) {
+    'edgeMargin', 'sensorCount', 'pinOffset', 'encoderDiameter', 'boardThickness', 'mountHoleDiameter']) {
     if (raw[numKey] !== undefined) raw[numKey] = Number(raw[numKey]);
   }
   return clampConfig(raw);
@@ -1232,6 +1735,7 @@ function runCLI(argv) {
   switch (cmd) {
     case 'kicad': result = { [args.out || (slug(cfg.name) + '.kicad_pcb')]: generateKiCadPcb(cfg) }; break;
     case 'stl': result = { [args.out || (slug(cfg.name) + '_plate.stl')]: generateSTL(cfg) }; break;
+    case 'drill': result = { [args.out || (slug(cfg.name) + '_PTH.drl')]: generateExcellon(cfg, true) }; break;
     case 'scad': result = { [args.out || (slug(cfg.name) + '_plate.scad')]: generateOpenSCAD(cfg) }; break;
     case 'gerber': result = { [args.out || (slug(cfg.name) + '_F_Cu.gbr')]: generateGerberFCu(cfg) }; break;
     case 'kmk': result = { [args.out || 'kb.py']: generateKMK(cfg) }; break;
@@ -1241,12 +1745,17 @@ function runCLI(argv) {
       result = generateAll(cfg);
       const dir = args.out || './build';
       fs.mkdirSync(dir, { recursive: true });
-      for (const [name, body] of Object.entries(result)) fs.writeFileSync(path.join(dir, name), body);
+      for (const [name, body] of Object.entries(result)) {
+        const target = path.join(dir, name);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, body);
+      }
       process.stdout.write('Wrote ' + Object.keys(result).length + ' files to ' + dir + '\n');
       return;
     }
     case 'check': {
       const board = buildBoard(cfg);
+      const bundle = generateAll(cfg), verified = verifyBundle(cfg, bundle);
       const pcb = generateKiCadPcb(cfg);
       const v = validateKiCadPcb(pcb);
       const mesh = buildPlateMesh(cfg);
@@ -1264,9 +1773,14 @@ function runCLI(argv) {
         stl_triangles: mesh.facets.length, stl_bad_normals: badNormals.length,
         kmk_has_keymap: generateKMK(cfg).includes('keyboard.keymap = ['),
         qmk_has_matrix: generateQMK(cfg)['keyboard.json'].includes('matrix_pins'),
+        bundle_valid: verified.valid,
+        gerber_layers: verified.gerbers.length, drill_files: verified.drills.length,
+        stl_open_edges: verified.mesh.badEdges, stl_volume_error_mm3: verified.mesh.volumeError,
+        routing_remaining: verified.geometry.remainingRoutes,
+        geometry_issues: verified.geometry.issues,
       };
       process.stdout.write(JSON.stringify(report, null, 2) + '\n');
-      process.exitCode = (v.valid && badNormals.length === 0) ? 0 : 1;
+      process.exitCode = (verified.valid && verified.geometry.geometryValid) ? 0 : 1;
       return;
     }
     default:
@@ -1283,14 +1797,15 @@ function runCLI(argv) {
  * ===================================================================== */
 
 const api = {
-  PROGRAMS, DEFAULT_CONFIG, PICO_PINOUT, RP2040_GPIO_POOL, RP2040_ADC_POOL,
+  PROGRAMS, SHOWCASES, GERBER_LAYERS, DEFAULT_CONFIG, PICO_PINOUT, RP2040_GPIO_POOL, RP2040_ADC_POOL,
   CLI_HELP,
-  f, clamp, clampConfig, applyProgram, defaultKeymap, normaliseKeymap, slug,
+  f, clamp, numeric, clampConfig, applyProgram, defaultKeymap, normaliseKeymap, sanitizeKeycode, stableUuid, slug,
   computeLayout, buildPinAssignment, buildNetlist, buildBoard,
   generateKiCadPcb, tokenizeSexp, parseSexp, validateSexp, validateKiCadPcb,
-  computeNormal, emitQuadTriangles, buildPlateMesh, generateSTL,
-  generateOpenSCAD, generateGerberFCu, generateKMK, generateQMK,
-  generateAll, loadConfig, parseArgs, runCLI,
+  computeNormal, emitQuadTriangles, platePolygons, polygonArea, buildPlateMesh, inspectMesh, generateSTL,
+  generateOpenSCAD, generateGerber, generateGerberFCu, validateGerber, generateExcellon, validateExcellon, generateKMK, generateQMK,
+  distanceToSegment, segmentsIntersect, distanceSegmentToPad, inspectBoard, verifyBundle,
+  generateAll, loadConfig, parseArgs, runCLI, validateSTL,
 };
 
 if (typeof module !== 'undefined' && module.exports) module.exports = api;

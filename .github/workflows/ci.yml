@@ -28,4 +28,7 @@ jobs:
           npm --version
 
       - name: Run test suite
-        run: node --test
+        run: |
+          node --check cad.js
+          node --check app.js
+          node --test test.js ui-test.js

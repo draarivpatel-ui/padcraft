@@ -29,7 +29,7 @@ Requirements:
 ```sh
 git clone https://github.com/draarivpatel-ui/padcraft.git
 cd padcraft
-node --test
+node --test test.js ui-test.js
 ```
 
 To open the workstation locally:
@@ -50,7 +50,7 @@ node cad.js validate --in build/board.kicad_pcb
 
 | File | Role |
 | --- | --- |
-| `cad.js` | The generator core: matrix, KiBOM and Gerber, STL, OpenSCAD, firmware, plus the CLI |
+| `cad.js` | The generator core: matrix, KiCad and Gerber, STL, OpenSCAD, firmware, plus the CLI |
 | `app.js` | UI wiring: configuration form, presets, and live export |
 | `index.html`, `style.css` | The workstation shell and its styling |
 | `test.js` | The test suite |
@@ -86,7 +86,7 @@ round trip through `validate`.
 1. Fork the repository and create a branch from `main`.
 2. Make your change with tests. Every bug fix should include a regression test
   that fails before your fix.
-3. Run the full suite locally: `node --test`.
+3. Run the full suite locally: `node --test test.js ui-test.js`.
 4. Update documentation where behaviour or a file format changed.
 5. Open the PR against `main` with:
    - a short summary of what changed and why,

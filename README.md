@@ -1,88 +1,146 @@
 # PadCraft
 
-PadCraft is a client-side EDA and mechanical CAD generator for RP2040 diode-matrix macropads. Given a switch matrix dimension, pitch, and peripheral configuration, it generates a synchronized KiCad 8 `.kicad_pcb` board file, an RS-274X front copper Gerber, an ASCII STL switch plate, a parametric OpenSCAD plate and enclosure tray, and matching KMK (`kb.py`) and QMK (`keyboard.json`, `keymap.c`, `config.h`, `rules.mk`) firmware bundles from one clamped configuration object.
+**One design. Every layer.**
 
-It includes presets for the Hack Club Hackpad, OnBoard, Sprig, and Blot hardware programs, and works for any RP2040-based `COL2ROW` diode matrix keyboard.
+PadCraft is a browser engineering workstation for RP2040 macropads. A single normalized configuration drives the PCB, switch plate, enclosure source, manufacturing layers and firmware. Inspect a copper pad, isolate its net, follow the remaining airwires and download an entire hardware project without installing a package.
 
-Live workstation: https://aariv.me/padcraft/
+[Open the live workstation](https://aariv.me/padcraft/) | [Read the project story](DEVPOST_UPGRADE.md)
 
-## Running Locally
+## A five-second demo
 
-Open `index.html` directly in a browser or serve the directory over HTTP:
+1. Click **48-key stress test** to generate the largest supported matrix with an encoder and three analog headers.
+2. Hover any gold pad to see its reference, net, coordinates and hole size. Click it to isolate that net.
+3. Read the export checks and electrical continuity meter. Dashed airwires identify the connections still to route.
+4. Download the ZIP: **21 artifacts**, including seven Gerber layers, two drill files and a complete QMK folder tree.
+
+### Showcase designs
+
+| Design | Keys | Hardware | Plate triangles | Drill operations | Routes to finish |
+| --- | ---: | --- | ---: | ---: | ---: |
+| Studio control | 12 | MX matrix and volume encoder | 3,288 | 111 | 19 |
+| Sensor console | 6 | MX matrix and three ADC headers | 2,000 | 83 | 21 |
+| Pocket instrument | 8 | Choc matrix and encoder | 3,072 | 91 | 18 |
+| 48-key stress test | 48 | MX matrix, encoder and three ADC headers | 4,752 | 300 | 35 |
+
+These figures come from the shipped presets and the generator checks. Each plate has zero open or misoriented mesh edges and zero invalid normals.
+
+## Start locally
+
+Open `index.html` directly in a modern browser. There is no build step, external font, CDN, runtime dependency or network request. The same static files work at `https://aariv.me/padcraft/` on GitHub Pages.
+
+For an optional local HTTP server:
 
 ```sh
 python3 -m http.server 8000
-# open http://localhost:8000/
 ```
 
-There is no build step, external runtime dependency, or network request. Every calculation, S-expression parser check, STL mesher pass, and CRC32 ZIP archive build runs locally in the browser or through Node.js.
+## What makes the workstation useful
 
-## Workstation Features
+- **A coherent model:** rows, columns, pitch, peripherals, GPIO allocation and shortcuts flow into every exporter. Numeric bounds and keycode normalization handle empty, oversized, mixed and malformed input.
+- **Mechanical separation:** a dedicated 32 mm controller bay prevents the Pico footprint from overlapping switches. A minimum 18 mm pitch leaves room for diode placement; narrow sensor designs widen enough to fit their headers.
+- **Electrical inspection:** pad hover and click reveal physical identity, isolate nets and highlight copper. A connectivity graph counts disconnected pad groups instead of presenting a fabricated manufacturing pass.
+- **Editable shortcuts:** changes regenerate both firmware formats and preserve overlapping cells when the matrix changes size. Bare key names such as `ESC` normalize to `KC.ESC`.
+- **Readable controls:** primary parameters are visible, detailed mechanical settings are expandable, source inspection is optional, and the interface supports both light and dark themes.
+- **Keyboard access:** Tab reaches all controls; arrow keys, Home and End inspect switches on the canvas; Escape clears the selection. Alt plus arrow keys navigate keymap cells. Ctrl or Command plus S downloads the bundle; Ctrl or Command plus Enter rechecks it.
+- **Resilient execution:** canvas dimensions respect device pixel ratio and observed element resizes. Missing Canvas or restricted storage leaves source generation available. Failed generation clears stale files and disables bundle export.
 
-- **Hardware presets:** Hackpad (3x4 MX + EC11 rotary encoder), OnBoard (2x3 MX + analog sensor header), Sprig (3x6 Kailh Choc + encoder), and Blot (1x4 Kailh Choc + encoder + sensor).
-- **Parametric mechanical and PCB controls:** matrix rows (1 to 6), columns (1 to 8), switch footprint (`MX` or `Choc`), key center pitch, switch cutout opening, switch plate thickness, FR-4 core thickness, `Edge.Cuts` margin, M2 mounting hole diameter, EC11 encoder placement and bushing diameter, ADC header count, and RP2040 GPIO pin offset.
-- **Interactive Layer 0 keymap matrix:** editable KMK keycode cells that regenerate KMK `kb.py` and QMK `keymap.c` immediately while preserving cell assignments when resizing rows or columns.
-- **KiCad 8 / FR-4 layer canvas:** top-down millimetre-ruled viewport showing the `#12261A` matte green FR-4 solder mask, `#D49A45` ENIG copper pads with drill holes, `F.Cu` row buses, `B.Cu` column buses, and `#F4F1EA` `F.SilkS` component courtyards and reference designators (`SW1..SWn`, `D1..Dn`, `ENC1`, `U1 RP2040_PICO`), with individual layer visibility toggles and a 10.0 mm scale bar.
-- **Live DRC & S-expression verifier:** parses the emitted `.kicad_pcb` text back into an AST and checks balanced parentheses, contiguous net declarations starting at `(net 0 "")`, resolved pad net references, unit-length STL facet normals, and RP2040 GPIO pool bounds.
-- **In-browser CRC32 ZIP bundler:** downloads individual artifacts or packages all eight files into a single `.zip` archive using a dependency-free store-only ZIP writer.
+## The 21 exported artifacts
 
-## Generated Artifacts
-
-| File | Description |
+| Artifact | Purpose |
 | --- | --- |
-| `<name>.kicad_pcb` | KiCad 8 (`version 20240108`) board layout with footprints, through-hole and SMD pads, net declarations, copper segments, `Edge.Cuts` outline, and mounting holes |
-| `<name>_plate.stl` | Watertight ASCII STL switch plate mesh generated by axis-aligned cell decomposition |
-| `<name>_plate.scad` | Parametric OpenSCAD switch plate and enclosure tray with true cylindrical bores (`plate`, `case`, and `assembly` render modes) |
-| `<name>_F_Cu.gbr` | RS-274X front copper Gerber with `D10` pad flashes, `D11` copper traces, `D12` board outline, and `M02*` terminator |
-| `kb.py` | KMK CircuitPython firmware ready to copy to a `CIRCUITPY` drive as `code.py` |
-| `qmk_bundle.json` | JSON bundle containing QMK `keyboard.json`, `keymap.c`, `config.h`, and `rules.mk` |
-| `padcraft_config.json` | Clamped configuration snapshot used to produce the bundle |
-| `preview.json` | Complete computed board placement and netlist model |
+| `<name>.kicad_pcb` | KiCad 8 board with embedded footprints, unique object identifiers, resolved pad nets, matrix copper, board profile and mounting holes |
+| `<name>_plate.stl` | Closed ASCII STL with exact square switch openings and 48-segment circular encoder and mounting bores |
+| `<name>_plate.scad` | OpenSCAD plate and tray with a real plate support ledge, clearance and dimensions derived from editable parameters |
+| `<name>_F_Cu.gbr`, `<name>_B_Cu.gbr` | Front and back copper, including every applicable pad at its actual size and position |
+| `<name>_F_Mask.gbr`, `<name>_B_Mask.gbr` | Solder mask openings expanded by 0.10 mm per side |
+| `<name>_F_Paste.gbr` | Front SMD paste apertures |
+| `<name>_F_SilkS.gbr` | Component outlines and diode polarity strokes |
+| `<name>_Edge_Cuts.gbr` | Closed board profile, separate from copper |
+| `<name>_PTH.drl`, `<name>_NPTH.drl` | Plated and non-plated Excellon operations with explicit decimal coordinates; EC11 mounting slots use `G85` |
+| `kb.py` | KMK matrix, media keys, encoder controls and optional standard `analogio` input readers |
+| `qmk/<name>/keyboard.json` | QMK matrix, layout, RP2040 and rotary encoder definitions |
+| `qmk/<name>/keymaps/default/keymap.c` | QMK shortcuts, rotary mapping and a debounced direct encoder push switch |
+| `qmk/<name>/config.h`, `qmk/<name>/rules.mk` | QMK configuration and enabled features |
+| `qmk_bundle.json` | The same four QMK sources as a JSON object |
+| `padcraft_config.json`, `preview.json` | Normalized configuration and complete placement/netlist snapshots |
+| `verification.json` | Export round trips, mesh topology, volume checks, geometry findings and remaining connection groups |
 
-### STL vs. OpenSCAD Bores
+Gerber files use RS-274X `FSLAX36Y36` coordinates in millimetres. Roundrect apertures use additive rectangle and circle primitives. All Gerber and drill files share a bottom-left Cartesian origin; KiCad and the interactive canvas use the corresponding top-left board coordinates. The ZIP stores UTF-8 filenames, CRC32 checksums and matching local/central directory records.
 
-The fast in-browser ASCII STL mesher (`buildPlateMesh`) uses axis-aligned rectilinear cell decomposition. Square switch cutouts (`14.0 x 14.0 mm`) are exact, while circular openings (the EC11 encoder bore and the four M2 mounting holes) are emitted as axis-aligned square openings in the preview STL. The accompanying `<name>_plate.scad` file uses true cylindrical primitives (`cylinder(d=..., $fn=48)`) for both the plate and the bottom enclosure tray.
+Circular STL bores are polygonal, as all triangle meshes must be. With 48 segments their maximum chord deviation is below 0.013 mm at the largest supported 12 mm encoder bore. The OpenSCAD cylindrical bores use the same segment count.
 
-## Electrical Architecture
+Copper screening also checks foreign-net pad crossings, pad envelope separation, track intersections, non-plated drills and copper-to-edge clearance. Rounded-pad envelope checks are conservative; native KiCad DRC remains the consumer check.
 
-PadCraft wires a `COL2ROW` diode matrix around a 40-pin Raspberry Pi Pico (`RP2040`):
+## Electrical architecture
 
-- Column GPIOs are driven outputs; row GPIOs are inputs with internal pull-ups.
-- Each switch (`SW1..SWn`) connects column bus `COLc` on pad 1 to an isolated intermediate node `N_Rr_Cc` on pad 2.
-- Each series diode (`D1..Dn`) connects its anode (pad 1) to `N_Rr_Cc` and its cathode (pad 2) to row bus `ROWr`, matching `DiodeOrientation.COL2ROW` in KMK and `DIODE_DIRECTION COL2ROW` in QMK.
-- Digital matrix and encoder pins are allocated deterministically from `GP0` through `GP22` (shifted by `pinOffset`). Analog sensor headers allocate dedicated ADC pins `GP26`, `GP27`, and `GP28`.
+The switch matrix is `COL2ROW`:
 
-## Command-Line Interface
+```text
+Column GPIO -> COL bus -> switch -> isolated key node -> diode anode
+Diode cathode -> ROW bus -> row GPIO
+```
 
-`cad.js` runs directly under Node.js with zero external packages:
+Rows drive low; columns are sensed with pull-ups. Each switch has its own diode. Back copper carries column buses; front copper carries row buses, switch-to-diode connections and diode-to-row taps. Digital matrix and encoder pins come from `GP0` through `GP22`; sensor headers use the separate ADC pool `GP26`, `GP27` and `GP28`.
+
+The model distinguishes MX and Choc electrical and support holes. The Pico uses 2.54 mm header pitch and 17.78 mm spacing between rows. EC11 common is grounded, its electrical pins use 2.5 mm spacing, and its two 2.1 x 2.8 mm mounting slots appear in both KiCad and Excellon.
+
+## Verification
+
+Run the entire suite with Node 22 or newer:
 
 ```sh
-node cad.js presets                         # list hardware presets
+node --test test.js ui-test.js
+```
+
+Verified on Node **v24.16.0**: **110 tests passed, 0 failed, 0 skipped**.
+
+The suite includes:
+
+- 87 engine, export, geometry, firmware and CLI tests.
+- 23 ZIP, shipped HTML syntax and DOM behavior tests, including every configuration field, four presets, imports, downloads, keyboard inspection, net isolation, themes, resize and failure recovery.
+- A 48-configuration geometry sweep covering every supported matrix size at minimum pitch and margin, with mixed MX/Choc switches and all peripherals.
+- A 20-board KiCad matrix sweep, required sections, pad/net correspondence, duplicate references, numeric geometry and unique identifiers.
+- Actual emitted STL parsing, opposite edge incidence, positive signed volume and independent polygon-area volume comparison.
+- Gerber pad dimensions and positions, layer membership, paste/mask separation, corruption handling and profiles wider than 100 mm.
+- Excellon diameters, coordinates, plating, slot endpoints and deliberately damaged tool/coordinate records.
+- Four QMK keymaps syntax checked by the local C compiler with firmware API stubs, and four KMK files executed with standard board, encoder, media and analog API stubs. Local C and Python compilers are optional and add these checks when available.
+
+DOM verification executes the actual `cad.js` and `app.js` against IDs parsed from the shipped HTML, captures console errors and rejects nonfinite canvas geometry. These checks do not substitute for a manual browser inspection or running consumer CAD software.
+
+## Command-line workflow
+
+The generator also runs directly under Node:
+
+```sh
+node cad.js presets
 node cad.js kicad --rows 3 --cols 4 --out board.kicad_pcb
 node cad.js stl --program Sprig --out plate.stl
-node cad.js scad --rows 2 --cols 3 --out plate.scad
+node cad.js scad --rows 2 --cols 3 --thickness 4 --out plate.scad
 node cad.js gerber --rows 2 --cols 2 --out front.gbr
+node cad.js drill --rows 2 --cols 2 --out plated.drl
 node cad.js kmk --rows 3 --cols 4 --out kb.py
 node cad.js qmk --rows 3 --cols 4 --out qmk_bundle.json
-node cad.js preview --rows 3 --cols 4 --out preview.json
 node cad.js all --config padcraft_config.json --out ./build
-node cad.js check --rows 4 --cols 5          # run full generator + validator check
-node cad.js validate --in board.kicad_pcb    # validate an existing .kicad_pcb file
+node cad.js check --rows 4 --cols 5
+node cad.js validate --in board.kicad_pcb
 ```
 
-## Verification Suite
+`check` reports export validity, mesh topology, remaining routes and geometry findings. `all` writes the same 21 artifacts and creates the nested QMK directories.
 
-Run the 45 automated unit tests with Node's built-in test runner:
+## From the workstation to hardware
 
-```sh
-node --test test.js
-```
+PadCraft is an inspectable starting point. Finish the visible controller and peripheral airwires in KiCad, run native KiCad DRC, compare the embedded footprints against your chosen component datasheets and regenerate manufacturing files after routing. The included Gerbers describe the generated matrix layout and are not a completed production board.
 
-The test suite verifies STL facet normal unit lengths and divergence-theorem enclosed volume, KiCad S-expression tokenization and netlist contiguity across a 20-board matrix sweep, `COL2ROW` pad-to-net topology, RP2040 GPIO pool conflict detection, KMK Python syntax via `python3 -I -c "import ast; ast.parse(...)"`, QMK `keyboard.json` layout generation, RS-274X Gerber aperture flashing, and CLI exit codes.
+KMK firmware uses CircuitPython and the KMK library on the target Pico; place `kb.py` on the `CIRCUITPY` drive as `code.py`. Analog readers expose normalized input values for application-specific behavior. The QMK tree supplies matrix and encoder behavior; its sample USB identifiers are for development. The enclosure is a parameterized tray with a plate ledge; adapt cable access and component clearances for your build.
 
-## Scope
+## Source map
 
-PadCraft generates valid, synchronized starter layouts, mechanical plates, and firmware definitions for custom macropads. Copper routing in `.kicad_pcb` and `.gbr` covers the row and column bus rails; perform a final trace routing pass and DRC inspection in KiCad 8 before sending Gerbers to a board house.
+| File | Responsibility |
+| --- | --- |
+| `cad.js` | Geometry, netlist, placement, topology and connectivity checks, exporters, parsers and CLI |
+| `app.js` | Dependency-free ZIP writer, canvas inspection, configuration and export UI |
+| `index.html`, `style.css` | Accessible responsive workstation and theme system |
+| `test.js`, `ui-test.js` | Engine/export regressions and deterministic DOM interaction tests |
 
 ## License
 

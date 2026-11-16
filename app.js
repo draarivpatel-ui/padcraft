@@ -47,22 +47,27 @@
 
   /* files: [{ name: string, data: string | Uint8Array }] */
   function buildZip(files) {
+    if (!Array.isArray(files) || files.length > 65535) throw new Error('ZIP supports at most 65535 files.');
     const w = makeWriter();
     const cd = makeWriter();
+    const seen = new Set();
     let count = 0;
     for (const f of files) {
+      if (!f || typeof f.name !== 'string' || !f.name || /[\\\x00]/.test(f.name) || f.name.startsWith('/') || f.name.split('/').some(part => !part || part === '.' || part === '..') || seen.has(f.name)) throw new Error('ZIP filenames must be unique relative paths.');
+      seen.add(f.name);
       const name = toBytes(f.name);
       const data = toBytes(f.data);
+      if (name.length > 65535 || data.length > 0xFFFFFFFF) throw new Error('ZIP file exceeds the classic format limits.');
       const crc = crc32(data);
       const offset = w.bytes.length;
 
       /* Local file header. */
       w.u32(0x04034b50);
       w.u16(20);            // version needed to extract
-      w.u16(0);             // general purpose bit flag
+      w.u16(0x0800);        // UTF-8 names
       w.u16(0);             // compression method: store
       w.u16(0);             // last mod time
-      w.u16(0);             // last mod date
+      w.u16(0x21);          // January 1, 1980
       w.u32(crc);
       w.u32(data.length);   // compressed size
       w.u32(data.length);   // uncompressed size
@@ -75,10 +80,10 @@
       cd.u32(0x02014b50);
       cd.u16(20);           // version made by
       cd.u16(20);           // version needed to extract
+      cd.u16(0x0800);
       cd.u16(0);
       cd.u16(0);
-      cd.u16(0);
-      cd.u16(0);
+      cd.u16(0x21);
       cd.u32(crc);
       cd.u32(data.length);
       cd.u32(data.length);
@@ -148,11 +153,15 @@
     ['sensor', 'sensor', 'checkbox'],
   ];
 
-  const LAYER_TOGGLES = ['showTraces', 'showPads', 'showSilk', 'showCutouts', 'showLabels'];
+  const LAYER_TOGGLES = ['showTraces', 'showPads', 'showSilk', 'showCutouts', 'showLabels', 'showAirwires'];
 
   let currentFiles = {};
   let currentBoard = null;
   let currentConfig = null;
+  let currentVerification = null;
+  let selectedNet = '';
+  let selectedRef = '';
+  let viewTransform = null;
   let kmState = { rows: 0, cols: 0, cells: [] };
 
   function setStatus(msg, kind) {
@@ -163,7 +172,7 @@
   }
 
   function sanitizeKeycode(v) {
-    return String(v).replace(/[^A-Za-z0-9_.]/g, '') || 'KC.NO';
+    return pc.sanitizeKeycode(v);
   }
 
   function readConfig() {
@@ -209,8 +218,20 @@
         inp.type = 'text';
         inp.value = kmState.cells[r][c];
         inp.title = 'Row ' + r + ', column ' + c;
+        inp.setAttribute('aria-label', 'Keycode for row ' + (r + 1) + ', column ' + (c + 1));
+        inp.setAttribute('autocomplete', 'off');
+        inp.setAttribute('spellcheck', 'false');
+        inp.addEventListener('keydown', event => {
+          if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key) || !event.altKey) return;
+          event.preventDefault();
+          const dr = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+          const dc = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+          const target = grid.children[pc.clamp(r + dr, 0, kmState.rows - 1) * kmState.cols + pc.clamp(c + dc, 0, kmState.cols - 1)];
+          if (target) target.focus();
+        });
         inp.addEventListener('input', () => {
           kmState.cells[r][c] = sanitizeKeycode(inp.value);
+          markShowcase('');
           generate();
         });
         grid.appendChild(inp);
@@ -224,7 +245,8 @@
     const canvas = $('preview');
     if (!canvas || !board) return;
     const ctx = canvas.getContext('2d');
-    const dpr = window.devicePixelRatio || 1;
+    if (!ctx) return;
+    const dpr = pc.clamp(Number(window.devicePixelRatio) || 1, 1, 3);
     const cssW = canvas.clientWidth || 640;
     const cssH = canvas.clientHeight || 450;
     canvas.width = Math.round(cssW * dpr);
@@ -235,13 +257,14 @@
     const W = board.layout.width, H = board.layout.height;
     const rulerW = 24;
     const pad = 34;
-    const availW = cssW - rulerW - 2 * pad;
-    const availH = cssH - rulerW - 2 * pad;
+    const availW = Math.max(1, cssW - rulerW - 2 * pad);
+    const availH = Math.max(1, cssH - rulerW - 2 * pad);
     const scale = Math.min(availW / W, availH / H);
     const ox = rulerW + (cssW - rulerW - W * scale) / 2;
     const oy = rulerW + (cssH - rulerW - H * scale) / 2;
     const X = (x) => ox + x * scale;
     const Y = (y) => oy + y * scale;
+    viewTransform = { scale, ox, oy };
 
     const show = (id) => { const n = $(id); return n ? n.checked : true; };
 
@@ -333,12 +356,14 @@
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       for (const t of board.traces) {
+        ctx.globalAlpha = selectedNet && selectedNet !== t.net ? 0.2 : 1;
         ctx.strokeStyle = t.layer === 'F.Cu' ? 'rgba(200, 75, 49, 0.90)' : 'rgba(59, 130, 166, 0.85)';
         ctx.lineWidth = Math.max(1.3, t.width * scale);
         ctx.beginPath();
         t.points.forEach((p, i) => i === 0 ? ctx.moveTo(X(p[0]), Y(p[1])) : ctx.lineTo(X(p[0]), Y(p[1])));
         ctx.stroke();
       }
+      ctx.globalAlpha = 1;
     }
 
     /* 5. Component Silkscreen Courtyards (F.SilkS #F4F1EA). */
@@ -396,20 +421,45 @@
           else if (/^COL/.test(netName)) ringColor = '#c89240';
           else if (/^(GND|3V3|VBUS)/.test(netName)) ringColor = '#b9935a';
 
-          const padR = Math.max(1.8, 0.95 * scale);
+          const padR = Math.max(0.8, p.w / 2 * scale);
+          ctx.globalAlpha = selectedNet && netName !== selectedNet ? 0.25 : 1;
           ctx.fillStyle = ringColor;
-          ctx.beginPath();
-          ctx.arc(X(p.x), Y(p.y), padR, 0, Math.PI * 2);
-          ctx.fill();
+          if (p.shape === 'circle') {
+            ctx.beginPath(); ctx.arc(X(p.x), Y(p.y), padR, 0, Math.PI * 2); ctx.fill();
+          } else ctx.fillRect(X(p.x - p.w / 2), Y(p.y - p.h / 2), p.w * scale, p.h * scale);
 
           /* Plated through-hole drill center. */
-          if (p.drill || p.type !== 'smd') {
+          if (p.drill > 0) {
             ctx.fillStyle = '#09110c';
             ctx.beginPath();
-            ctx.arc(X(p.x), Y(p.y), Math.max(0.8, padR * 0.44), 0, Math.PI * 2);
+            ctx.arc(X(p.x), Y(p.y), Math.max(0.4, p.drill / 2 * scale), 0, Math.PI * 2);
             ctx.fill();
           }
         }
+        ctx.globalAlpha = 1;
+        for (const hole of cp.npth || []) {
+          ctx.fillStyle = '#09110c'; ctx.beginPath();
+          if (hole.w && hole.h) ctx.ellipse(X(hole.x), Y(hole.y), hole.w / 2 * scale, hole.h / 2 * scale, 0, 0, Math.PI * 2);
+          else ctx.arc(X(hole.x), Y(hole.y), hole.drill / 2 * scale, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    if (show('showAirwires') && currentVerification) {
+      ctx.strokeStyle = 'rgba(211,200,136,.55)'; ctx.lineWidth = 1;
+      ctx.setLineDash([3, 5]);
+      for (const wire of currentVerification.geometry.airwires) {
+        if (selectedNet && wire.net !== selectedNet) continue;
+        ctx.beginPath(); ctx.moveTo(X(wire.a[0]), Y(wire.a[1])); ctx.lineTo(X(wire.b[0]), Y(wire.b[1])); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+    if (selectedRef) {
+      const component = board.components.find(cp => cp.ref === selectedRef);
+      if (component && component.outline) {
+        ctx.strokeStyle = '#f0d5a4'; ctx.lineWidth = 2;
+        ctx.strokeRect(X(component.x - component.outline.w / 2), Y(component.y - component.outline.h / 2), component.outline.w * scale, component.outline.h * scale);
       }
     }
 
@@ -460,9 +510,6 @@
     ctx.fillStyle = '#D49A45';
     ctx.fillText('10.0 mm', bx + barPx + 6, by + 2);
 
-    ctx.textAlign = 'right';
-    ctx.fillStyle = '#9cb0a2';
-    ctx.fillText('F.Cu (ROW) / B.Cu (COL) / ENIG / F.SilkS', cssW - 10, by + 2);
   }
 
   /* ---- Info panels -------------------------------------------------- */
@@ -470,7 +517,7 @@
   function renderStats(board, config) {
     const box = $('stats');
     if (!box) return;
-    const mesh = pc.buildPlateMesh(config);
+    const mesh = currentVerification && currentVerification.mesh;
     const pins = board.netlist.pins;
     const items = [
       ['Edge.Cuts envelope', board.stats.width.toFixed(2) + ' x ' + board.stats.height.toFixed(2) + ' mm'],
@@ -481,7 +528,8 @@
       ['Declared nets', board.stats.nets],
       ['Drill hits', board.stats.drills],
       ['RP2040 GPIOs', pins.needed + ' / ' + pins.pool.length + ' digital'],
-      ['Plate STL facets', mesh.facets.length],
+      ['Plate STL facets', mesh ? mesh.triangles : 'pending'],
+      ['Plate volume', mesh ? mesh.volume.toFixed(1) + ' mm3' : 'pending'],
       ['ADC channels', pins.sensor.length ? pins.sensor.join(', ') : 'none'],
     ];
     box.innerHTML = '';
@@ -514,38 +562,72 @@
     }
     p.sensor.forEach((pin, i) => add('SENSOR' + i, pin, 'adc'));
     box.appendChild(table);
-    box.appendChild(el('p', 'hint', 'COL2ROW diode orientation. Column GPIOs drive high/low; row GPIOs read via internal pull-ups. Analog sensors allocate GP26..GP28.'));
+    box.appendChild(el('p', 'hint', 'COL2ROW: rows drive low and columns are sensed with pull-ups. Sensor headers use GP26, GP27 and GP28.'));
   }
 
-  function renderValidation(config, files) {
+  function renderValidation() {
     const box = $('validation');
-    if (!box) return;
-    const pcbName = Object.keys(files).find(n => n.endsWith('.kicad_pcb'));
-    const v = pc.validateKiCadPcb(files[pcbName]);
-    const mesh = pc.buildPlateMesh(config);
-    const badNormals = mesh.facets.filter(t => Math.abs(Math.hypot(t.n[0], t.n[1], t.n[2]) - 1) > 1e-6).length;
-    const kmk = files['kb.py'] || '';
-    const qmk = files['qmk_bundle.json'] || '';
-    const checks = [
-      ['KiCad S-expression AST parses', v.valid],
-      ['All pad net references resolve', v.valid && v.errors.length === 0],
-      ['Net indices contiguous from 0', v.nets.length > 0],
-      ['Footprints and pads populated', v.footprints > 0 && v.pads >= 40],
-      ['All STL facet normals unit length', badNormals === 0],
-      ['KMK keymap table emitted', kmk.includes('keyboard.keymap = [')],
-      ['QMK matrix_pins emitted', qmk.includes('matrix_pins')],
-      ['GPIO allocation within RP2040 pool', true],
-    ];
+    if (!box || !currentVerification) return;
     box.innerHTML = '';
-    for (const [label, ok] of checks) {
+    const checks = [...currentVerification.checks,
+      { label: 'Copper geometry checks', valid: currentVerification.geometry.geometryValid,
+        detail: currentVerification.geometry.issues.length ? currentVerification.geometry.issues.join('; ') : '0.20 mm track clearance and drill boundaries' }];
+    for (const check of checks) {
       const row = el('div', 'check-row');
-      row.appendChild(el('span', 'badge ' + (ok ? 'ok' : 'bad'), ok ? 'PASS' : 'FAIL'));
-      row.appendChild(el('span', 'check-label', label));
-      box.appendChild(row);
+      row.appendChild(el('span', 'badge ' + (check.valid ? 'ok' : 'bad'), check.valid ? 'PASS' : 'FAIL'));
+      const label = el('span', 'check-label', check.label);
+      label.appendChild(el('small', 'check-detail', check.detail));
+      row.appendChild(label); box.appendChild(row);
     }
-    if (v.errors.length) {
-      box.appendChild(el('p', 'hint', 'DRC notes: ' + v.errors.join('; ')));
+  }
+
+  function renderNetFilter() {
+    const select = $('netSelect');
+    if (!select || !currentBoard) return;
+    const names = currentBoard.nets.names;
+    if (!names.includes(selectedNet)) selectedNet = '';
+    select.innerHTML = '';
+    const all = el('option', null, 'All nets'); all.value = ''; select.appendChild(all);
+    for (const name of names) { const option = el('option', null, name); option.value = name; select.appendChild(option); }
+    select.value = selectedNet;
+  }
+
+  function inspectText(text, active) {
+    const box = $('inspectInfo');
+    if (box) { if (box.textContent !== text) box.textContent = text; box.className = 'inspection' + (active ? ' active' : ''); }
+  }
+
+  function inspectComponent(ref) {
+    if (!currentBoard) return;
+    const component = currentBoard.components.find(item => item.ref === ref);
+    if (!component) return;
+    selectedRef = ref;
+    const key = currentBoard.layout.keys.find(item => item.ref === ref);
+    const shortcut = key ? ' | ' + currentBoard.keymap[key.row][key.col] + ' | ' + 'ROW' + key.row + ' / COL' + key.col : '';
+    inspectText(ref + ' | ' + component.value + ' | x ' + component.x.toFixed(2) + ', y ' + component.y.toFixed(2) + ' mm' + shortcut, true);
+  }
+
+  function hitAt(event) {
+    if (!viewTransform || !currentBoard) return null;
+    const rect = $('preview').getBoundingClientRect();
+    const point = [(event.clientX - rect.left - viewTransform.ox) / viewTransform.scale,
+      (event.clientY - rect.top - viewTransform.oy) / viewTransform.scale];
+    let closest = null;
+    for (const component of currentBoard.components) for (const pad of component.pads) {
+      const distance = Math.hypot(point[0] - pad.x, point[1] - pad.y);
+      if (distance * viewTransform.scale <= Math.max(6, pad.w * viewTransform.scale) && (!closest || distance < closest.distance)) closest = { component, pad, distance, point };
     }
+    return closest || { point };
+  }
+
+  function inspectPointer(event, select) {
+    const hit = hitAt(event);
+    if (!hit) return;
+    if (hit.pad) {
+      const net = hit.pad.net ? hit.pad.net.name : 'unassigned';
+      inspectText(hit.component.ref + ' pad ' + hit.pad.num + ' | ' + net + ' | x ' + hit.pad.x.toFixed(2) + ', y ' + hit.pad.y.toFixed(2) + ' mm | ' + (hit.pad.drill > 0 ? hit.pad.drill + ' mm plated drill' : hit.pad.w + ' x ' + hit.pad.h + ' mm SMD'), true);
+      if (select) { selectedNet = hit.pad.net ? net : ''; selectedRef = hit.component.ref; $('netSelect').value = selectedNet; drawPreview(currentBoard); }
+    } else if (!selectedRef) inspectText('x ' + hit.point[0].toFixed(2) + ', y ' + hit.point[1].toFixed(2) + ' mm | Hover a copper pad to inspect its net.', false);
   }
 
   /* ---- Files, downloads and code viewer ----------------------------- */
@@ -574,6 +656,7 @@
       const size = new TextEncoder().encode(body).length;
       const btn = el('button', 'file-btn');
       btn.type = 'button';
+      btn.disabled = !currentVerification || !currentVerification.valid || !currentVerification.geometry.geometryValid;
       const n = el('span', 'file-name', name);
       const s = el('span', 'file-size', (size / 1024).toFixed(1) + ' KB');
       btn.appendChild(n);
@@ -594,7 +677,7 @@
     const pre = $('codePreview');
     if (pre) pre.textContent = text;
     const meta = $('codeMeta');
-    if (meta) meta.textContent = name + '  |  ' + body.length + ' B  |  ' + lines.length + ' lines';
+    if (meta) meta.textContent = name ? name + '  |  ' + new TextEncoder().encode(body).length + ' B  |  ' + lines.length + ' lines' : 'No artifact selected';
   }
 
   function renderCodeViewer(files) {
@@ -615,33 +698,45 @@
 
   function generate() {
     try {
-      const config = readConfig();
-      const files = pc.generateAll(config);
-      files['preview.json'] = JSON.stringify(pc.buildBoard(config), null, 2) + '\n';
-      currentConfig = config;
-      currentFiles = files;
-      currentBoard = pc.buildBoard(config);
-
-      drawPreview(currentBoard);
-      renderStats(currentBoard, config);
-      renderPins(currentBoard);
-      renderValidation(config, files);
-      renderFileList(files);
-      renderCodeViewer(files);
-
-      const count = Object.keys(files).length;
-      setStatus(
-        'DRC PASS | ' + count + ' files generated for "' + config.name + '" (' +
-        config.rows + 'x' + config.cols + ' ' + config.switchType + ')',
-        'ok'
-      );
+      const config = readConfig(), files = pc.generateAll(config), board = pc.buildBoard(config);
+      const verification = pc.verifyBundle(config, files);
+      currentConfig = config; currentFiles = files; currentBoard = board; currentVerification = verification;
+      if (!board.components.some(component => component.ref === selectedRef)) selectedRef = '';
+      renderNetFilter(); drawPreview(board); renderStats(board, config); renderPins(board); renderValidation();
+      renderFileList(files); renderCodeViewer(files);
+      const count = Object.keys(files).length, routes = verification.geometry.remainingRoutes;
+      $('downloadZip').disabled = !verification.valid || !verification.geometry.geometryValid;
       $('cfgJson').textContent = JSON.stringify(config, null, 2);
-    } catch (e) {
-      setStatus('Solver error: ' + e.message, 'error');
+      $('heroKeys').textContent = config.rows * config.cols;
+      $('heroLayers').textContent = verification.gerbers.length;
+      $('heroFiles').textContent = count;
+      $('artifactCount').textContent = count + ' ARTIFACTS';
+      $('heroVerified').textContent = verification.valid ? 'Export schemas checked. ' + routes + ' routes to finish.' : 'An export check failed. See the report below.';
+      $('routingReadout').textContent = verification.geometry.connectedConnections + ' / ' + verification.geometry.totalConnections + ' pad connections | ' + routes + ' routes remaining';
+      $('routingMeter').setAttribute('aria-valuenow', verification.geometry.continuityPercent);
+      $('routingFill').style.width = verification.geometry.continuityPercent + '%';
+      setStatus((verification.valid && verification.geometry.geometryValid ? 'CHECKED' : 'CHECK FAILED') + ' | ' + config.rows + ' x ' + config.cols + ' ' + config.switchType + ' | ' + count + ' artifacts | ' + routes + ' routes to finish', verification.valid && verification.geometry.geometryValid ? 'ok' : 'error');
+    } catch (error) {
+      currentFiles = {}; currentBoard = null; currentConfig = null; currentVerification = null; viewTransform = null;
+      selectedNet = ''; selectedRef = '';
+      $('downloadZip').disabled = true;
+      renderFileList({}); renderCodeViewer({});
+      $('validation').textContent = 'Resolve the configuration error to regenerate the design.';
+      $('heroVerified').textContent = 'Generation paused. Export is unavailable.';
+      $('heroKeys').textContent = '-'; $('heroFiles').textContent = '0'; $('heroLayers').textContent = '-';
+      $('artifactCount').textContent = '0 ARTIFACTS'; $('cfgJson').textContent = '';
+      $('stats').textContent = ''; $('pins').textContent = ''; $('netSelect').innerHTML = '';
+      $('routingReadout').textContent = 'Generation paused'; $('routingFill').style.width = '0%';
+      $('routingMeter').setAttribute('aria-valuenow', '0');
+      inspectText('Generation paused. Fix the design error and recheck the configuration.', false);
+      const canvas = $('preview'), context = canvas && canvas.getContext('2d');
+      if (context) { context.setTransform(1, 0, 0, 1, 0, 0); context.clearRect(0, 0, canvas.width, canvas.height); }
+      setStatus('Design error: ' + error.message, 'error');
     }
   }
 
   function onParamChange() {
+    markShowcase('');
     const cfg = readConfig();
     syncKeymapGrid(cfg.rows, cfg.cols);
     generate();
@@ -697,6 +792,7 @@
 
     $('program').addEventListener('change', () => {
       applyPreset($('program').value);
+      markShowcase('');
       onParamChange();
     });
 
@@ -708,46 +804,110 @@
     $('generate').addEventListener('click', generate);
     $('resetBtn').addEventListener('click', () => {
       setFormFromConfig(pc.DEFAULT_CONFIG);
+      markShowcase('');
       generate();
     });
-    $('downloadZip').addEventListener('click', () => {
-      const files = Object.entries(currentFiles).map(([name, data]) => ({ name, data }));
-      const bytes = buildZip(files);
-      const base = pc.slug(currentConfig ? currentConfig.name : 'padcraft');
-      downloadBytes(base + '_bundle.zip', bytes, 'application/zip');
-      setStatus('Exported ' + base + '_bundle.zip (' + files.length + ' files).', 'ok');
+    $('downloadZip').addEventListener('click', exportZip);
+    $('importButton').addEventListener('click', () => $('importConfig').click());
+    $('netSelect').addEventListener('change', () => {
+      selectedNet = $('netSelect').value; selectedRef = '';
+      inspectText(selectedNet ? 'Isolated net ' + selectedNet + '. Copper pads, traces and remaining airwires are highlighted.' : 'Showing every net. Hover a pad to inspect it.', !!selectedNet);
+      drawPreview(currentBoard);
+    });
+    $('themeToggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'));
+    for (const button of document.querySelectorAll('[data-showcase]')) button.addEventListener('click', () => {
+      applyShowcase(button.dataset.showcase);
+      if ($('workstation').scrollIntoView) $('workstation').scrollIntoView({ block: 'start' });
+      $('preview').focus({ preventScroll: true });
+    });
+    $('preview').addEventListener('pointermove', event => inspectPointer(event, false));
+    $('preview').addEventListener('click', event => inspectPointer(event, true));
+    $('preview').addEventListener('pointerleave', () => { if (!selectedRef && !selectedNet) inspectText('Hover a pad or use arrow keys on the canvas to inspect switches.', false); });
+    $('preview').addEventListener('keydown', event => {
+      if (!currentBoard) return;
+      const keys = currentBoard.layout.keys;
+      if (event.key === 'Escape') { event.preventDefault(); selectedRef = ''; selectedNet = ''; $('netSelect').value = ''; inspectText('Selection cleared.', false); drawPreview(currentBoard); return; }
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+      event.preventDefault();
+      let index = Math.max(0, keys.findIndex(key => key.ref === selectedRef));
+      const delta = event.key === 'ArrowDown' ? currentBoard.config.cols : event.key === 'ArrowUp' ? -currentBoard.config.cols : event.key === 'ArrowLeft' ? -1 : 1;
+      index = event.key === 'Home' ? 0 : event.key === 'End' ? keys.length - 1 : pc.clamp(index + delta, 0, keys.length - 1);
+      inspectComponent(keys[index].ref); drawPreview(currentBoard);
+    });
+    document.addEventListener('keydown', event => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); exportZip(); }
+      if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); generate(); }
     });
     $('codeSelect').addEventListener('change', () => showCode($('codeSelect').value));
 
     $('importConfig').addEventListener('change', (e) => {
       const file = e.target.files && e.target.files[0];
       if (!file) return;
+      if (file.size > 1024 * 1024) { setStatus('Import failed: configuration files must be smaller than 1 MB.', 'error'); e.target.value = ''; return; }
       const reader = new FileReader();
       reader.onload = () => {
         try {
           const config = pc.clampConfig(JSON.parse(String(reader.result)));
           setFormFromConfig(config);
+          markShowcase('');
           generate();
-          setStatus('Loaded configuration from ' + file.name + '.', 'ok');
+          if (currentConfig) setStatus('Loaded configuration from ' + file.name + '.', 'ok');
         } catch (err) {
           setStatus('Import failed: ' + err.message, 'error');
         }
       };
+      reader.onerror = () => setStatus('Import failed: the selected file could not be read.', 'error');
       reader.readAsText(file);
       e.target.value = '';
     });
 
     window.addEventListener('resize', () => drawPreview(currentBoard));
+    if (typeof ResizeObserver !== 'undefined') { const observer = new ResizeObserver(() => drawPreview(currentBoard)); observer.observe($('preview')); }
+  }
+
+  function markShowcase(id) {
+    for (const button of document.querySelectorAll('[data-showcase]')) {
+      const active = button.dataset.showcase === id;
+      button.className = 'showcase' + (active ? ' active' : ''); button.setAttribute('aria-pressed', active ? 'true' : 'false');
+    }
+  }
+
+  function applyShowcase(id) {
+    const scenario = pc.SHOWCASES[id];
+    if (!scenario) return;
+    selectedNet = ''; selectedRef = '';
+    setFormFromConfig(pc.clampConfig(scenario.config)); markShowcase(id); generate();
+    inspectText(scenario.description + ' Hover a pad to inspect the design.', false);
+  }
+
+  function exportZip() {
+    if (!currentConfig || !currentVerification || !currentVerification.valid || !currentVerification.geometry.geometryValid || !Object.keys(currentFiles).length) return;
+    try {
+      const files = Object.entries(currentFiles).map(([name, data]) => ({ name, data }));
+      const base = pc.slug(currentConfig.name);
+      downloadBytes(base + '_bundle.zip', buildZip(files), 'application/zip');
+      setStatus('Downloaded ' + base + '_bundle.zip | ' + files.length + ' artifacts | ' + currentVerification.geometry.remainingRoutes + ' routes still require KiCad routing.', 'ok');
+    } catch (error) { setStatus('Download failed: ' + error.message, 'error'); }
+  }
+
+  function setTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    $('themeToggle').textContent = theme === 'light' ? 'Dark theme' : 'Light theme';
+    $('themeToggle').setAttribute('aria-label', 'Switch to ' + (theme === 'light' ? 'dark' : 'light') + ' theme');
+    $('themeToggle').setAttribute('aria-pressed', theme === 'light' ? 'true' : 'false');
+    try { window.localStorage.setItem('padcraft.theme', theme); } catch (_) { /* Private browsing can disable storage. */ }
   }
 
   function init() {
-    if (!pc) {
-      setStatus('Error: cad.js did not load before app.js.', 'error');
-      return;
-    }
-    setFormFromConfig(pc.DEFAULT_CONFIG);
-    wire();
-    generate();
+    if (!pc) { setStatus('Error: cad.js did not load before app.js.', 'error'); return; }
+    let theme = 'dark';
+    try { const stored = window.localStorage.getItem('padcraft.theme'); if (stored === 'light' || stored === 'dark') theme = stored; } catch (_) { /* Storage is optional. */ }
+    setTheme(theme); wire(); applyShowcase('studio');
+    globalThis.PadCraftUI = {
+      getSnapshot: () => ({ config: currentConfig ? JSON.parse(JSON.stringify(currentConfig)) : null,
+        files: { ...currentFiles }, verification: currentVerification ? JSON.parse(JSON.stringify(currentVerification)) : null,
+        selectedNet, selectedRef, transform: viewTransform ? { ...viewTransform } : null }),
+    };
   }
 
   if (document.readyState === 'loading') {
