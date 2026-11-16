@@ -882,9 +882,9 @@ function polygonArea(polygon) {
 
 function buildPlateMesh(config) {
   const c = clampConfig(config), layout = computeLayout(c);
-  const W = Math.round(layout.width * 1e6) / 1e6, H = Math.round(layout.height * 1e6) / 1e6;
-  const T = c.plateThickness, polygons = platePolygons(layout);
   const round = value => Math.round(value * 1e6) / 1e6;
+  const W = round(layout.width), H = round(layout.height);
+  const T = round(c.plateThickness), polygons = platePolygons(layout);
   const edges = polygons.map(polygon => polygon.map((point, i) => [point, polygon[(i + 1) % polygon.length]]));
   const X = [...new Set([0, W, ...polygons.flat().map(point => point[0])])].filter(x => x >= 0 && x <= W).sort((a, b) => a - b);
   const yOn = (edge, x) => round(edge[0][1] + (edge[1][1] - edge[0][1]) * (x - edge[0][0]) / (edge[1][0] - edge[0][0]));

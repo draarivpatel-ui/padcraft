@@ -745,6 +745,14 @@ test('STL: deleted facets, wrong winding and mismatched names cannot pass', () =
   assert.equal(pc.validateSTL(stl.replace(/endsolid .*/, 'endsolid wrong')).valid, false);
 });
 
+test('STL: irrational plate thickness matches exported vertex precision and expectedVolume', () => {
+  const cfg = { rows: 6, cols: 8, keySpacing: 24, edgeMargin: 24, plateThickness: Math.PI };
+  const mesh = pc.buildPlateMesh(cfg);
+  const report = pc.validateSTL(pc.generateSTL(cfg), mesh.stats.expectedVolume);
+  assert.equal(report.valid, true, report.errors.join('; '));
+  assert.ok(report.volumeError < 0.01);
+});
+
 test('OpenSCAD: tray has a real support ledge and clearance above it', () => {
   const scad = pc.generateOpenSCAD(CFG);
   assert.ok(scad.includes('plate_ledge       = 1.2;'));

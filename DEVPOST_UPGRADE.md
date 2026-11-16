@@ -47,7 +47,7 @@ Verified on Node v24.16.0 with:
 node --test test.js ui-test.js
 ```
 
-**110 passed, 0 failed, 0 skipped.** The suite comprises 87 engine/export/CLI tests and 23 ZIP/HTML/DOM checks.
+**111 passed, 0 failed, 0 skipped.** The suite comprises 88 engine/export/CLI tests and 23 ZIP/HTML/DOM checks.
 
 | Verification | Observed result |
 | --- | --- |

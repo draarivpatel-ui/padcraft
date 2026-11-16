@@ -92,11 +92,11 @@ Run the entire suite with Node 22 or newer:
 node --test test.js ui-test.js
 ```
 
-Verified on Node **v24.16.0**: **110 tests passed, 0 failed, 0 skipped**.
+Verified on Node **v24.16.0**: **111 tests passed, 0 failed, 0 skipped**.
 
 The suite includes:
 
-- 87 engine, export, geometry, firmware and CLI tests.
+- 88 engine, export, geometry, firmware and CLI tests.
 - 23 ZIP, shipped HTML syntax and DOM behavior tests, including every configuration field, four presets, imports, downloads, keyboard inspection, net isolation, themes, resize and failure recovery.
 - A 48-configuration geometry sweep covering every supported matrix size at minimum pitch and margin, with mixed MX/Choc switches and all peripherals.
 - A 20-board KiCad matrix sweep, required sections, pad/net correspondence, duplicate references, numeric geometry and unique identifiers.
