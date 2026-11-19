@@ -514,7 +514,7 @@
 
   /* ---- Info panels -------------------------------------------------- */
 
-  function renderStats(board, config) {
+  function renderStats(board) {
     const box = $('stats');
     if (!box) return;
     const mesh = currentVerification && currentVerification.mesh;
@@ -702,7 +702,7 @@
       const verification = pc.verifyBundle(config, files);
       currentConfig = config; currentFiles = files; currentBoard = board; currentVerification = verification;
       if (!board.components.some(component => component.ref === selectedRef)) selectedRef = '';
-      renderNetFilter(); drawPreview(board); renderStats(board, config); renderPins(board); renderValidation();
+      renderNetFilter(); drawPreview(board); renderStats(board); renderPins(board); renderValidation();
       renderFileList(files); renderCodeViewer(files);
       const count = Object.keys(files).length, routes = verification.geometry.remainingRoutes;
       $('downloadZip').disabled = !verification.valid || !verification.geometry.geometryValid;
