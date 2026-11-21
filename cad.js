@@ -180,7 +180,52 @@ function normaliseKeymap(config) {
 function sanitizeKeycode(value) {
   const key = String(value || '').trim().toUpperCase();
   const qualified = key.startsWith('KC.') ? key : 'KC.' + key;
-  return /^KC\.[A-Z][A-Z0-9_]*$/.test(qualified) ? qualified : 'KC.NO';
+  return /^KC\.[A-Z][A-Z0-9_]*(\([0-9]+\))?$/.test(qualified) ? qualified : 'KC.NO';
+}
+
+/* The standard KMK keycode space: every flat name PadCraft can legitimately
+ * emit into generated KMK firmware (and into QMK via the KC_ name). Anything
+ * outside this set, such as KC.NOT_A_KEY or a bare KC.MO with no layer
+ * argument, is invalid and must fail design validation instead of reaching
+ * a firmware artifact. */
+const KMK_FLAT_KEYCODES = [
+  'KC.NO', 'KC.TRNS',
+  'KC.ESC', 'KC.ENT', 'KC.TAB', 'KC.SPC', 'KC.BSPC', 'KC.DEL', 'KC.INS',
+  'KC.HOME', 'KC.END', 'KC.PGUP', 'KC.PGDN',
+  'KC.UP', 'KC.DOWN', 'KC.LEFT', 'KC.RIGHT', 'KC.RGHT',
+  'KC.CAPS', 'KC.PSCR', 'KC.PAUS',
+  'KC.LCTL', 'KC.LSFT', 'KC.LALT', 'KC.LGUI',
+  'KC.RCTL', 'KC.RSFT', 'KC.RALT', 'KC.RGUI',
+  'KC.MINS', 'KC.EQL', 'KC.LBRC', 'KC.RBRC', 'KC.BSLS',
+  'KC.SCLN', 'KC.QUOT', 'KC.GRV', 'KC.COMM', 'KC.DOT', 'KC.SLSH',
+  'KC.PSLS', 'KC.PAST', 'KC.PMNS', 'KC.PPLS', 'KC.PENT',
+  'KC.PDOT', 'KC.PEQL', 'KC.PCMM',
+  'KC.KP_SLASH', 'KC.KP_ASTERISK', 'KC.KP_MINUS', 'KC.KP_PLUS',
+  'KC.KP_ENTER', 'KC.KP_DOT', 'KC.KP_EQUAL', 'KC.KP_COMMA',
+  'KC.MUTE', 'KC.VOLU', 'KC.VOLD', 'KC.BRIU', 'KC.BRID',
+  'KC.MNXT', 'KC.MPRV', 'KC.MSTP', 'KC.MPLY', 'KC.EJCT',
+  'KC.MFFD', 'KC.MRWD',
+];
+for (let i = 0; i < 26; i++) KMK_FLAT_KEYCODES.push('KC.' + String.fromCharCode(65 + i));
+for (let i = 0; i <= 9; i++) KMK_FLAT_KEYCODES.push('KC.N' + i, 'KC.P' + i, 'KC.KP_' + i);
+for (let i = 1; i <= 24; i++) KMK_FLAT_KEYCODES.push('KC.F' + i);
+const VALID_KMK_KEYCODES = new Set(KMK_FLAT_KEYCODES);
+
+/* Layer-switching keycodes take a single layer argument 0-15 and exist in
+ * both KMK (KC.MO(1)) and QMK (MO(1)) forms. KMK has no OSL, and LM/LT/FD
+ * take extra arguments, so only these five are emitted. */
+const LAYER_KEYCODE_RE = /^KC\.(MO|TG|TO|TT|DF)\(([0-9]|1[0-5])\)$/;
+
+function isValidKeycode(key) {
+  return typeof key === 'string' &&
+    (VALID_KMK_KEYCODES.has(key) || LAYER_KEYCODE_RE.test(key));
+}
+
+/* KMK spells keycodes KC.X and KC.MO(n); QMK spells them KC_X and MO(n). */
+function kmkToQmk(key) {
+  const layer = LAYER_KEYCODE_RE.exec(String(key));
+  if (layer) return layer[1] + '(' + layer[2] + ')';
+  return String(key).replace(/^KC\.N([0-9])$/, 'KC_$1').replace(/^KC\./, 'KC_');
 }
 
 function stableUuid(namespace, index) {
@@ -249,7 +294,29 @@ function computeLayout(config) {
   const mountX = [c.edgeMargin / 2, width - c.edgeMargin / 2];
   const mountY = [c.edgeMargin / 2 + topBand * 0.35, height - c.edgeMargin / 2 - bottomBand * 0.35];
   const mounts = [];
-  for (const mx of mountX) for (const my of mountY) mounts.push({ x: mx, y: my });
+  /* The Pico pad column sits inside the controller bay and can reach the
+   * corner mount lanes on short boards. Each lane bends vertically so a
+   * nominal bore keeps copper clearance from the pad envelopes; a wider
+   * requested bore that still clips is reported by the drill audit. */
+  const padHalf = 0.85;
+  const mountLaneClearance = 0.2;
+  const nominalReach = 1.8 + mountLaneClearance;
+  const picoPadCx = keyWidth + controllerBay / 2 + 8.89;
+  const padTop = height / 2 - 19 * 2.54 / 2 - padHalf;
+  const padBottom = height / 2 + 19 * 2.54 / 2 + padHalf;
+  for (const mx of mountX) {
+    const dxEff = Math.max(0,
+      Math.min(Math.abs(mx - picoPadCx), Math.abs(mx - (picoPadCx - 2 * 8.89))) - padHalf);
+    const dyNeeded = dxEff >= nominalReach ? 0 :
+      Math.sqrt(nominalReach * nominalReach - dxEff * dxEff);
+    for (const my of mountY) {
+      let y = my;
+      if (dyNeeded > 0) {
+        y = my < height / 2 ? Math.min(my, padTop - dyNeeded) : Math.max(my, padBottom + dyNeeded);
+      }
+      mounts.push({ x: mx, y });
+    }
+  }
 
   const cutouts = keys.map(k => ({ x: k.x, y: k.y, w: c.switchCutout, h: c.switchCutout, kind: 'switch' }));
   if (encoder) cutouts.push({ x: encoder.x, y: encoder.y, w: c.encoderDiameter, h: c.encoderDiameter, kind: 'encoder' });
@@ -493,10 +560,10 @@ function buildBoard(config) {
 
   /* Board outline. */
   const edge = [[0, 0], [layout.width, 0], [layout.width, layout.height], [0, layout.height], [0, 0]];
-  for (const m of layout.mounts) {
-    pushDrill(m.x, m.y, c.mountHoleDiameter, false);
+  layout.mounts.forEach((m, i) => {
+    drillPoints.push({ x: m.x, y: m.y, diameter: c.mountHoleDiameter, plated: false, ref: 'H' + (i + 1) });
     silk.push({ x: m.x, y: m.y - 4, text: 'M2' });
-  }
+  });
 
   return {
     config: c, layout, netlist, keymap,
@@ -1278,7 +1345,7 @@ function generateKMK(config) {
   const board = buildBoard(config);
   const c = board.config;
   const p = board.netlist.pins;
-  const hasMedia = !!p.encoder || board.keymap.flat().some(key => /KC\.(MUTE|VOLU|VOLD|MPLY|MSTP|MNXT|MPRV)$/.test(key));
+  const hasMedia = !!p.encoder || board.keymap.flat().some(key => /KC\.(MUTE|VOLU|VOLD|MPLY|MSTP|MNXT|MPRV|BRIU|BRID|EJCT|MFFD|MRWD)$/.test(key));
   const L = [];
   L.push('# ' + c.name);
   L.push('# KMK firmware generated by PadCraft for Hack Club ' + c.program + '.');
@@ -1366,7 +1433,7 @@ function generateQMK(config) {
   }
 
   const keymapRows = board.keymap.map(row =>
-    '        ' + row.map(k => k.replace(/^KC\.N([0-9])$/, 'KC_$1').replace(/^KC\./, 'KC_')).join(', ')).join(',\n');
+    '        ' + row.map(kmkToQmk).join(', ')).join(',\n');
   const keymap = [
     '// QMK keymap generated by PadCraft for Hack Club ' + c.program + '.',
     '#include QMK_KEYBOARD_H',
@@ -1440,6 +1507,33 @@ function segmentsIntersect(a, b, c, d) {
   return [distanceToSegment(a, c, d), distanceToSegment(b, c, d), distanceToSegment(c, a, b), distanceToSegment(d, a, b)].some(distance => distance < 1e-7);
 }
 
+/* Distance from a point to a pad envelope: zero inside, otherwise the gap
+ * to the nearest edge or arc. */
+function pointToPadDistance(x, y, pad) {
+  if (pad.shape === 'circle') return Math.max(0, Math.hypot(x - pad.x, y - pad.y) - pad.w / 2);
+  const dx = Math.max(0, Math.abs(x - pad.x) - pad.w / 2);
+  const dy = Math.max(0, Math.abs(y - pad.y) - pad.h / 2);
+  return Math.hypot(dx, dy);
+}
+
+/* Minimum distance between a pad envelope and a slot capsule's centreline:
+ * exact for convex pairs (segment endpoints to the rect, rect corners to
+ * the segment, plus intersection). */
+function rectToSegmentDistance(pad, a, b) {
+  const left = pad.x - pad.w / 2, right = pad.x + pad.w / 2;
+  const top = pad.y - pad.h / 2, bottom = pad.y + pad.h / 2;
+  const inside = point => point[0] >= left && point[0] <= right && point[1] >= top && point[1] <= bottom;
+  if (inside(a) || inside(b)) return 0;
+  const corners = [[left, top], [right, top], [right, bottom], [left, bottom]];
+  let distance = Math.min(pointToPadDistance(a[0], a[1], pad), pointToPadDistance(b[0], b[1], pad));
+  for (let index = 0; index < 4; index++) {
+    const p = corners[index], q = corners[(index + 1) % 4];
+    if (segmentsIntersect(a, b, p, q)) return 0;
+    distance = Math.min(distance, distanceToSegment(p, a, b), distanceToSegment(q, a, b));
+  }
+  return distance;
+}
+
 /* Conservative copper screening uses pad envelopes before native CAD DRC. */
 function distanceSegmentToPad(segment, pad) {
   if (pad.shape === 'circle') return Math.max(0, distanceToSegment([pad.x, pad.y], segment.a, segment.b) - pad.w / 2);
@@ -1476,6 +1570,31 @@ function inspectBoard(board) {
     if (drill.x - drill.diameter / 2 < 0 || drill.y - drill.diameter / 2 < 0 || drill.x + drill.diameter / 2 > board.layout.width || drill.y + drill.diameter / 2 > board.layout.height) issues.push('Drill leaves board outline');
   }
   const nonPlated = board.drillPoints.filter(drill => !drill.plated);
+  /* Non-plated bores (mounting holes, switch support pins, encoder slots)
+   * must keep copper clearance from every pad envelope and stay a sane web
+   * inside the board outline: a bore that clips copper or the edge is a
+   * fabrication defect even when the layout still parses. */
+  for (const drill of nonPlated) {
+    const radius = drill.diameter / 2;
+    const name = drill.ref || 'non-plated drill at (' + f(drill.x) + ', ' + f(drill.y) + ')';
+    for (const pad of pads) {
+      const gap = drill.slot
+        ? (pad.shape === 'circle'
+          ? distanceToSegment([pad.x, pad.y], drill.slot[0], drill.slot[1]) - pad.w / 2 - radius
+          : rectToSegmentDistance(pad, drill.slot[0], drill.slot[1]) - radius)
+        : pointToPadDistance(drill.x, drill.y, pad) - radius;
+      if (gap < clearance - 1e-7) {
+        issues.push(name + ' violates ' + clearance + ' mm copper clearance at ' + pad.ref + ':' + pad.num);
+      }
+    }
+    const xs = drill.slot ? [drill.slot[0][0], drill.slot[1][0]] : [drill.x];
+    const ys = drill.slot ? [drill.slot[0][1], drill.slot[1][1]] : [drill.y];
+    const web = Math.min(
+      Math.min(...xs) - radius, Math.min(...ys) - radius,
+      board.layout.width - Math.max(...xs) - radius,
+      board.layout.height - Math.max(...ys) - radius);
+    if (web < clearance - 1e-7) issues.push(name + ' violates ' + clearance + ' mm drill-to-edge clearance');
+  }
   for (const segment of segments) {
     if (segment.points.some(point => point[0] < 0 || point[1] < 0 || point[0] > board.layout.width || point[1] > board.layout.height)) issues.push(segment.net + ' trace leaves board outline');
     if ([segment.a, segment.b].some(point => Math.min(point[0], point[1], board.layout.width - point[0], board.layout.height - point[1]) < segment.width / 2 + clearance)) issues.push(segment.net + ' trace violates copper-to-edge clearance');
@@ -1549,7 +1668,19 @@ function verifyBundle(config, files) {
   const gerbersMatch = Object.entries(GERBER_LAYERS).every(([layer, data]) => {
     const file = gerbers.find(file => file.name.endsWith('_' + data.suffix + '.gbr'));
     if (!file || !file.valid) return false;
-    if (layer === 'Edge.Cuts') return file.flashes.length === 0 && file.draws.length === 4;
+    if (layer === 'Edge.Cuts') {
+      if (file.flashes.length !== 0 || file.draws.length !== 4) return false;
+      /* The outline must be the configured board rectangle, not any four
+       * draws: parsed coordinates are compared against the generated edge
+       * in Gerber space (origin bottom-left, Y flipped) within the 3:6
+       * coordinate resolution. */
+      const expectedEdge = board.edge.map(point => [point[0], board.layout.height - point[1]]);
+      return file.draws.every((draw, i) =>
+        Math.abs(draw.start[0] - expectedEdge[i][0]) < 0.000002 &&
+        Math.abs(draw.start[1] - expectedEdge[i][1]) < 0.000002 &&
+        Math.abs(draw.end[0] - expectedEdge[i + 1][0]) < 0.000002 &&
+        Math.abs(draw.end[1] - expectedEdge[i + 1][1]) < 0.000002);
+    }
     if (layer === 'F.SilkS') return file.flashes.length === 0 && file.draws.length > 0;
     const expected = pads.filter(pad => !(layer.startsWith('B.') && pad.drill === 0) && !(layer === 'F.Paste' && pad.drill > 0));
     const expansion = layer.endsWith('.Mask') ? 0.2 : 0;
@@ -1570,35 +1701,67 @@ function verifyBundle(config, files) {
   let firmwareMatches = false;
   try {
     const bundle = JSON.parse(files['qmk_bundle.json']), info = JSON.parse(bundle['keyboard.json']);
-    const expectedKeys = board.keymap.flat().map(key => key.replace(/^KC\.N([0-9])$/, 'KC_$1').replace(/^KC\./, 'KC_'));
-    const actualKeys = (bundle['keymap.c'].split('};')[0].match(/KC_[A-Z0-9_]+/g) || []);
+    const expectedKeys = board.keymap.flat().map(kmkToQmk);
+    const actualKeys = (bundle['keymap.c'].split('};')[0].match(/KC_[A-Z0-9_]+|[A-Z]{2,4}\([0-9]+\)/g) || []);
     const kmkBlock = /keyboard\.keymap\s*=\s*\[\s*\[([\s\S]*?)\]\s*,?\s*\]/.exec(files['kb.py']);
-    const kmkKeys = kmkBlock ? kmkBlock[1].match(/KC\.[A-Z][A-Z0-9_]*/g) || [] : [];
+    const kmkKeys = kmkBlock ? kmkBlock[1].match(/KC\.[A-Z][A-Z0-9_]*(\([0-9]+\))?/g) || [] : [];
     const base = slug(c.name);
     const qmkSourcesMatch = Object.entries(bundle).every(([name, body]) => files['qmk/' + base + '/' + (name === 'keymap.c' ? 'keymaps/default/' : '') + name] === body);
     firmwareMatches = JSON.stringify(info.matrix_pins.rows) === JSON.stringify(board.netlist.pins.rows) && JSON.stringify(info.matrix_pins.cols) === JSON.stringify(board.netlist.pins.cols) &&
       info.diode_direction === 'COL2ROW' && JSON.stringify(actualKeys) === JSON.stringify(expectedKeys) && !/,\s*\)/.test(bundle['keymap.c']) &&
+      board.keymap.flat().every(isValidKeycode) &&
       JSON.stringify(kmkKeys) === JSON.stringify(board.keymap.flat()) && files['kb.py'].includes('DiodeOrientation.COL2ROW') && qmkSourcesMatch;
   } catch (_) { firmwareMatches = false; }
-  let drcReport = null, bomOk = false, csvOk = false;
+  /* Integrity round trips: the shipped BOM, DRC report and layout proof are
+   * compared byte for byte against the artifacts this configuration would
+   * generate, so a silently patched quantity, a stubbed audit or a stale
+   * manifest all fail instead of passing on structure alone. */
+  let drcReport = null, drcOk = false, bomOk = false, csvOk = false, proofOk = false, artifactsOk = false;
   try {
+    const base = slug(c.name);
+    /* The expected bundle is regenerated from the configuration, so every
+     * shipped artifact is compared byte for byte: content tampering cannot
+     * survive even when the attacker reseals the layout proof. */
+    const expected = generateArtifacts(c);
+    artifactsOk = Object.keys(expected).every(name => files[name] === expected[name]);
     const drcName = Object.keys(files).find(name => name.endsWith('_drc.json'));
     drcReport = drcName ? JSON.parse(files[drcName]) : null;
+    const expectedAudit = auditDesign(c);
+    const checkIds = expectedAudit.checks.map(ch => ch.id);
+    const auditDigest = audit => sha256Hex((audit.checks || []).map(ch =>
+      ch.id + ':' + (ch.valid ? '1' : '0') + ':' + ch.detail).join('\n'));
+    drcOk = !!(drcReport && drcReport.schema === DRC_SCHEMA &&
+      Array.isArray(drcReport.checks) && drcReport.checks.length === checkIds.length &&
+      checkIds.every(id => drcReport.checks.some(ch => ch.id === id)) &&
+      drcReport.fingerprint === auditDigest(drcReport) &&
+      files[drcName] === expected[drcName]);
     const bomName = Object.keys(files).find(name => name.endsWith('_bom.json'));
     const csvName = Object.keys(files).find(name => name.endsWith('_bom.csv'));
     const bom = bomName ? JSON.parse(files[bomName]) : null;
+    const expectedBom = buildBom(c);
     if (bom && bom.schema === BOM_SCHEMA && Array.isArray(bom.items)) {
       const canonical = bom.items.map(item =>
         [item.category, item.refs.join('|'), item.qty, item.value, item.footprint, item.notes].join('')).join('\n');
       bomOk = bom.fingerprint === sha256Hex(canonical) && bom.totals.switches === board.stats.keys &&
-        bom.items.reduce((n, item) => n + item.qty, 0) === bom.totals.parts;
+        bom.items.reduce((n, item) => n + item.qty, 0) === bom.totals.parts &&
+        files[bomName] === expected[bomName];
     }
-    if (csvName && bom) {
-      const lines = files[csvName].split('\n').filter(line => line && !line.startsWith('#'));
-      csvOk = lines[0] === 'line,category,refs,qty,value,footprint,notes' && lines.length - 1 === bom.items.length &&
-        bom.items.every((item, i) => lines[i + 1].startsWith(item.line + ',' + item.category + ','));
-    }
-  } catch (_) { drcReport = null; bomOk = false; csvOk = false; }
+    csvOk = !!(csvName && files[csvName] === expected[csvName]);
+    /* The manifest must seal exactly the artifacts this configuration
+     * exports: completeness matters as much as the digests, because a
+     * bundle missing an unsealed file (the OpenSCAD source, the preview)
+     * with a freshly crafted manifest would otherwise look consistent. */
+    const expectedNames = new Set(Object.keys(expected));
+    const proofName = Object.keys(files).find(name => name.endsWith('_layout_proof.json'));
+    const proof = proofName ? JSON.parse(files[proofName]) : null;
+    const sealedNames = Object.keys(files).filter(name =>
+      !name.endsWith('_layout_proof.json') && name !== 'verification.json');
+    proofOk = !!(proof && proof.schema === PROOF_SCHEMA && Array.isArray(proof.files) &&
+      proof.files.length === expectedNames.size &&
+      proof.files.every(entry => expectedNames.has(entry.name)) &&
+      sealedNames.every(name => expectedNames.has(name)) &&
+      files[proofName] === JSON.stringify(buildLayoutProof(c, files), null, 2) + '\n');
+  } catch (_) { drcReport = null; drcOk = false; bomOk = false; csvOk = false; proofOk = false; artifactsOk = false; }
   const checks = [
     { label: 'KiCad 8 schema and net references', valid: kicad.valid && pcbMatches, detail: kicad.footprints + ' footprints, ' + kicad.pads + ' pads matched' },
     { label: 'Closed STL topology and winding', valid: mesh.valid, detail: mesh.triangles + ' triangles, ' + mesh.badEdges + ' open or misoriented edges' },
@@ -1607,9 +1770,11 @@ function verifyBundle(config, files) {
     { label: 'GPIO allocation is unique', valid: new Set(board.netlist.pins.usage.map(pin => pin.pin)).size === board.netlist.pins.usage.length, detail: board.netlist.pins.usage.length + ' assigned pins' },
     { label: 'Firmware matrix and keymap match', valid: firmwareMatches, detail: board.stats.keys + ' keys in KMK and QMK' },
     { label: 'Configuration round trip', valid: files['padcraft_config.json'] === JSON.stringify(c, null, 2) + '\n', detail: 'Normalized source matches exported snapshot' },
-    { label: 'Design rule audit is clean', valid: !!(drcReport && drcReport.valid && drcReport.errors === 0),
-      detail: drcReport ? drcReport.errors + ' errors, ' + drcReport.warnings + ' warnings across ' + drcReport.checks.length + ' rules' : 'drc report missing or unreadable' },
+    { label: 'Design rule audit is clean', valid: !!(drcReport && drcReport.valid && drcReport.errors === 0 && drcOk),
+      detail: drcReport ? (drcOk ? drcReport.errors + ' errors, ' + drcReport.warnings + ' warnings across ' + drcReport.checks.length + ' rules' : 'drc report failed the integrity round trip') : 'drc report missing or unreadable' },
     { label: 'Bill of materials round trip', valid: bomOk && csvOk, detail: 'JSON fingerprint, CSV rows and part totals recomputed' },
+    { label: 'Layout proof manifest round trip', valid: proofOk, detail: 'SHA-256 digests over the exported artifacts recomputed' },
+    { label: 'Exported artifacts match the regenerated bundle', valid: artifactsOk, detail: 'Every sealed file is byte-identical to a fresh export of this configuration' },
   ];
   return { valid: checks.every(check => check.valid), checks, kicad, mesh, geometry: inspectBoard(board),
     gerbers: gerbers.map(layer => ({ name: layer.name, valid: layer.valid, flashes: layer.flashes.length, draws: layer.draws.length, errors: layer.errors })),
@@ -1763,6 +1928,7 @@ const DRC_SCHEMA = 'padcraft.drc/1';
  * a recorded observation. */
 function auditBoard(board) {
   const c = board.config, layout = board.layout, pins = board.netlist.pins;
+  const geometry = inspectBoard(board);
   const checks = [];
   const add = (id, domain, label, severity, valid, detail) => {
     checks.push({ id, domain, label, severity, valid: !!valid, detail });
@@ -1868,6 +2034,17 @@ function auditBoard(board) {
     plated.length + ' plated hits on pads, ' + (board.drillPoints.length - plated.length) +
     ' non-plated; minimum bore ' + f(minBore) + ' mm');
 
+  /* Non-plated bores must keep copper clearance from every pad envelope and
+   * stay inside the outline: a mounting hole that clips a Pico pin or a
+   * support pin that grazes a pad is a fabrication defect, not a style
+   * issue. Reuses the same envelope scan as the copper geometry report. */
+  const boreConflicts = geometry.issues.filter(issue =>
+    issue.includes('copper clearance at') || issue.includes('drill-to-edge'));
+  add('mechanical.drill-copper', 'mechanical', 'Mounting and support bores keep copper clearance', 'error',
+    boreConflicts.length === 0,
+    boreConflicts.length ? boreConflicts.slice(0, 4).join('; ') :
+    board.drillPoints.filter(d => !d.plated).length + ' non-plated bores clear every copper pad and the edge');
+
   /* Electrical domain. */
   add('electrical.pin-budget', 'electrical', 'Matrix fits the RP2040 GPIO budget', 'error',
     pins.needed <= pins.pool.length,
@@ -1943,7 +2120,6 @@ function auditBoard(board) {
     (padCount['GND'] || 0) >= 1 && (!pins.sensor.length || (padCount['3V3'] || 0) >= 2),
     'GND on ' + (padCount['GND'] || 0) + ' pads, 3V3 on ' + (padCount['3V3'] || 0));
 
-  const geometry = inspectBoard(board);
   add('electrical.copper-clearance', 'electrical', 'Copper clearance holds at 0.2 mm', 'error',
     geometry.geometryValid,
     geometry.issues.length ? geometry.issues.length + ' clearance conflicts' :
@@ -1955,8 +2131,8 @@ function auditBoard(board) {
 
   /* Firmware domain. */
   const cells = board.keymap.flat();
-  const badCells = cells.filter(k => !/^KC\.[A-Z][A-Z0-9_]*$/.test(k));
-  add('firmware.keymap', 'firmware', 'Keymap covers every matrix position', 'error',
+  const badCells = cells.filter(k => !isValidKeycode(k));
+  add('firmware.keymap', 'firmware', 'Keymap covers every matrix position with valid keycodes', 'error',
     board.keymap.length === c.rows && board.keymap.every(r => r.length === c.cols) && badCells.length === 0,
     cells.length + ' keycodes over a ' + c.rows + ' x ' + c.cols + ' matrix' +
     (badCells.length ? '; invalid: ' + badCells.slice(0, 3).join(', ') : ''));
@@ -2031,9 +2207,15 @@ const PROOF_SCHEMA = 'padcraft.proof/1';
 function buildLayoutProof(config, files) {
   const c = clampConfig(config);
   const board = buildBoard(c);
+  /* The manifest covers every generated artifact except itself and the
+   * verification report it feeds: verification.json is emitted after the
+   * proof, so it can never hash its own contents. Entries are sorted by
+   * name so a repacked bundle with a different member order still hashes
+   * to the same manifest. */
   const entries = Object.entries(files)
-    .filter(([name]) => !name.endsWith('_layout_proof.json'))
-    .map(([name, body]) => ({ name, bytes: utf8Bytes(body).length, sha256: sha256Hex(body) }));
+    .filter(([name]) => !name.endsWith('_layout_proof.json') && name !== 'verification.json')
+    .map(([name, body]) => ({ name, bytes: utf8Bytes(body).length, sha256: sha256Hex(body) }))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return {
     schema: PROOF_SCHEMA,
     design: c.name,
@@ -2058,7 +2240,11 @@ function buildLayoutProof(config, files) {
   };
 }
 
-function generateAll(config) {
+/* Every exportable artifact except the layout proof and the verification
+ * report: verification.json is the consumer of those artifacts, and the
+ * proof seals them. verifyBundle() regenerates this exact set so bundle
+ * integrity is content equality, not just structural checks. */
+function generateArtifacts(config) {
   const c = clampConfig(config), base = slug(c.name);
   const bom = buildBom(c);
   const files = {
@@ -2080,8 +2266,17 @@ function generateAll(config) {
   for (const [name, body] of Object.entries(qmk)) {
     files['qmk/' + base + '/' + (name === 'keymap.c' ? 'keymaps/default/' : '') + name] = body;
   }
-  files['verification.json'] = JSON.stringify(verifyBundle(c, files), null, 2) + '\n';
+  return files;
+}
+
+function generateAll(config) {
+  const c = clampConfig(config), base = slug(c.name);
+  const files = generateArtifacts(c);
+  /* The layout proof seals the artifact digests first; the verification
+   * report is emitted last so its manifest check can audit the shipped
+   * proof instead of assuming one exists. */
   files[base + '_layout_proof.json'] = JSON.stringify(buildLayoutProof(c, files), null, 2) + '\n';
+  files['verification.json'] = JSON.stringify(verifyBundle(c, files), null, 2) + '\n';
   return files;
 }
 
@@ -2283,6 +2478,7 @@ const api = {
   PROGRAMS, SHOWCASES, GERBER_LAYERS, DEFAULT_CONFIG, PICO_PINOUT, RP2040_GPIO_POOL, RP2040_ADC_POOL,
   BOM_SCHEMA, DRC_SCHEMA, PROOF_SCHEMA, CLI_HELP,
   f, clamp, numeric, clampConfig, applyProgram, defaultKeymap, normaliseKeymap, sanitizeKeycode, stableUuid, slug,
+  VALID_KMK_KEYCODES, isValidKeycode, kmkToQmk, pointToPadDistance, rectToSegmentDistance,
   computeLayout, buildPinAssignment, buildNetlist, buildBoard,
   generateKiCadPcb, tokenizeSexp, parseSexp, validateSexp, validateKiCadPcb,
   computeNormal, emitQuadTriangles, platePolygons, polygonArea, buildPlateMesh, inspectMesh, generateSTL,

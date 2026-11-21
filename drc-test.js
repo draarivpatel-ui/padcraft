@@ -585,11 +585,11 @@ test('exports: bom.json round-trips with an intact fingerprint', () => {
   assert.equal(bom.fingerprint, pc.sha256Hex(canonical));
 });
 
-test('exports: layout proof lists every artifact except itself with real digests', () => {
+test('exports: layout proof lists every artifact except itself and the report with real digests', () => {
   const files = pc.generateAll(CFG);
   const proof = JSON.parse(files[pc.slug(CFG.name) + '_layout_proof.json']);
   assert.equal(proof.schema, 'padcraft.proof/1');
-  const expected = Object.keys(files).filter(n => !n.endsWith('_layout_proof.json'));
+  const expected = Object.keys(files).filter(n => !n.endsWith('_layout_proof.json') && n !== 'verification.json');
   assert.equal(proof.files.length, expected.length);
   assert.deepEqual(new Set(proof.files.map(e => e.name)), new Set(expected));
   for (const entry of proof.files) {
@@ -733,8 +733,223 @@ test('CLI: all writes the new artifacts into a directory', () => {
       assert.ok(names.some(n => n.endsWith(suffix)), suffix);
     }
     const proof = JSON.parse(fs.readFileSync(path.join(dir, names.find(n => n.endsWith('_layout_proof.json'))), 'utf8'));
-    assert.equal(proof.files.length, 24);
+    assert.equal(proof.files.length, 23);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/* ===================================================================== *
+ * 9. Review-blocker regressions: drill copper, keycodes, bundle integrity
+ * ===================================================================== */
+
+test('review: oversized mounting hole clips a Pico pad and the audit names both', () => {
+  const cfg = { rows: 1, cols: 1, keySpacing: 18, edgeMargin: 10, encoder: true, mountHoleDiameter: 4 };
+  const audit = pc.auditDesign(cfg);
+  const check = audit.checks.find(ch => ch.id === 'mechanical.drill-copper');
+  assert.equal(audit.valid, false);
+  assert.equal(check.valid, false);
+  assert.match(check.detail, /H\d violates 0\.2 mm copper clearance at U1:\d+/);
+  const v = pc.verifyBundle(cfg, pc.generateAll(cfg));
+  assert.equal(v.valid, false);
+  assert.equal(v.geometry.geometryValid, false);
+});
+
+test('review: default mount bores keep copper clearance on every showcase', () => {
+  for (const showcase of Object.values(pc.SHOWCASES)) {
+    const audit = pc.auditDesign(showcase.config);
+    const check = audit.checks.find(ch => ch.id === 'mechanical.drill-copper');
+    assert.equal(check.valid, true, showcase.config.name + ': ' + check.detail);
+  }
+});
+
+test('review: a nonexistent keycode fails the audit and the bundle round trip', () => {
+  const cfg = pc.clampConfig({ keymap: ['NOT_A_KEY'] });
+  const audit = pc.auditDesign(cfg);
+  const check = audit.checks.find(ch => ch.id === 'firmware.keymap');
+  assert.equal(check.valid, false);
+  assert.match(check.detail, /NOT_A_KEY/);
+  const v = pc.verifyBundle(cfg, pc.generateAll({ keymap: ['NOT_A_KEY'] }));
+  assert.equal(v.checks.find(ch => ch.label === 'Firmware matrix and keymap match').valid, false);
+  assert.equal(v.valid, false);
+});
+
+test('review: allowlisted keycodes pass, layer keycodes convert to QMK forms', () => {
+  assert.equal(pc.isValidKeycode('KC.TRNS'), true);
+  assert.equal(pc.isValidKeycode('KC.MO(3)'), true);
+  assert.equal(pc.isValidKeycode('KC.MO(16)'), false);
+  assert.equal(pc.isValidKeycode('KC.NOT_A_KEY'), false);
+  assert.equal(pc.kmkToQmk('KC.N1'), 'KC_1');
+  assert.equal(pc.kmkToQmk('KC.MO(2)'), 'MO(2)');
+  const cfg = pc.clampConfig({ rows: 1, cols: 3, encoder: false, sensor: false, keymap: ['MO(1)', 'A', 'ENT'] });
+  const v = pc.verifyBundle(cfg, pc.generateAll(cfg));
+  assert.equal(v.checks.find(ch => ch.label === 'Firmware matrix and keymap match').valid, true);
+});
+
+test('review: a stubbed DRC report never passes verification', () => {
+  const cfg = { rows: 1, cols: 1, encoder: false, sensor: false };
+  const files = pc.generateAll(cfg);
+  const name = Object.keys(files).find(n => n.endsWith('_drc.json'));
+  const stub = '{"valid":true,"errors":0,"warnings":0,"checks":[]}';
+  const v = pc.verifyBundle(cfg, { ...files, [name]: stub });
+  assert.equal(v.checks.find(ch => ch.label === 'Design rule audit is clean').valid, false);
+  assert.equal(v.valid, false);
+});
+
+test('review: a tampered BOM CSV quantity fails verification', () => {
+  const cfg = { rows: 1, cols: 1, encoder: false, sensor: false };
+  const files = pc.generateAll(cfg);
+  const name = Object.keys(files).find(n => n.endsWith('_bom.csv'));
+  assert.ok(files[name].includes(',SW1,1,'));
+  const v = pc.verifyBundle(cfg, { ...files, [name]: files[name].replace(',SW1,1,', ',SW1,99,') });
+  assert.equal(v.checks.find(ch => ch.label === 'Bill of materials round trip').valid, false);
+  assert.equal(v.valid, false);
+});
+
+test('review: a shifted Edge.Cuts coordinate fails verification', () => {
+  const cfg = { rows: 1, cols: 1, encoder: false, sensor: false };
+  const files = pc.generateAll(cfg);
+  const name = Object.keys(files).find(n => n.endsWith('_Edge_Cuts.gbr'));
+  const v = pc.verifyBundle(cfg, { ...files, [name]: files[name].replace(/X-?\d+Y-?\d+D01\*/, 'X1000000Y1000000D01*') });
+  assert.equal(v.checks.find(ch => ch.label === 'RS-274X layer round trip').valid, false);
+  assert.equal(v.valid, false);
+});
+
+test('review: a tampered layout proof or sealed file fails the manifest check', () => {
+  const files = pc.generateAll(CFG);
+  const proofName = Object.keys(files).find(n => n.endsWith('_layout_proof.json'));
+  const proof = JSON.parse(files[proofName]);
+  proof.files[0].sha256 = '0'.repeat(64);
+  const v1 = pc.verifyBundle(CFG, { ...files, [proofName]: JSON.stringify(proof, null, 2) + '\n' });
+  assert.equal(v1.checks.find(ch => ch.label === 'Layout proof manifest round trip').valid, false);
+  assert.equal(v1.valid, false);
+  /* Editing any sealed artifact under the manifest breaks the digest. */
+  const cfgName = 'padcraft_config.json';
+  const config = JSON.parse(files[cfgName]);
+  config.name = 'tampered';
+  const v2 = pc.verifyBundle(CFG, { ...files, [cfgName]: JSON.stringify(config, null, 2) + '\n' });
+  assert.equal(v2.checks.find(ch => ch.label === 'Layout proof manifest round trip').valid, false);
+  assert.equal(v2.valid, false);
+});
+
+test('review: a crafted manifest over a pruned bundle is rejected', () => {
+  const files = pc.generateAll(CFG);
+  const proofName = Object.keys(files).find(n => n.endsWith('_layout_proof.json'));
+  const scad = Object.keys(files).find(n => n.endsWith('.scad'));
+  const pruned = { ...files };
+  delete pruned[scad];
+  /* An attacker can rebuild a self-consistent manifest over the surviving
+   * files, but the expected artifact set is fixed by the configuration. */
+  const proof = JSON.parse(files[proofName]);
+  proof.files = proof.files.filter(entry => entry.name !== scad);
+  proof.fingerprint = pc.sha256Hex(proof.files.map(e => e.name + ':' + e.bytes + ':' + e.sha256).join('\n'));
+  pruned[proofName] = JSON.stringify(proof, null, 2) + '\n';
+  const v = pc.verifyBundle(CFG, pruned);
+  assert.equal(v.checks.find(ch => ch.label === 'Layout proof manifest round trip').valid, false);
+  assert.equal(v.valid, false);
+  /* Extra unsealed files fail the same way. */
+  const v2 = pc.verifyBundle(CFG, { ...files, 'extra.txt': 'x' });
+  assert.equal(v2.checks.find(ch => ch.label === 'Layout proof manifest round trip').valid, false);
+  assert.equal(v2.valid, false);
+});
+
+/* ===================================================================== *
+ * 10. Adversarial follow-up: keycode truth and content integrity
+ * ===================================================================== */
+
+/* Names the allowlist once shipped even though the generated KMK and/or
+ * QMK firmware cannot use them: KMK has no OSL layer function, QMK has no
+ * KC_PCOMM/KC_SLCK/KC_NLCK identifiers, power keycodes have no KMK
+ * registration, and international names need the International()
+ * extension, which PadCraft does not emit. */
+test('review: formerly accepted keycodes that break shipped firmware are rejected', () => {
+  const rejected = ['KC.OSL(1)', 'KC.PCOMM', 'KC.SLCK', 'KC.NLCK',
+    'KC.PWR', 'KC.SLEP', 'KC.WAKE', 'KC.APP', 'KC.NUHS', 'KC.NUBS',
+    'KC.INT1', 'KC.INT5', 'KC.INT9'];
+  for (const key of rejected) {
+    assert.equal(pc.isValidKeycode(key), false, key);
+    const cfg = { rows: 1, cols: 1, encoder: false, sensor: false, keymap: [key.replace(/^KC\./, '')] };
+    const audit = pc.auditDesign(cfg);
+    assert.equal(checkOf(audit, 'firmware.keymap').valid, false, key + ' audit');
+    assert.equal(pc.verifyBundle(cfg, pc.generateAll(cfg)).valid, false, key + ' bundle');
+  }
+});
+
+/* Every media name the allowlist ships must pull the MediaKeys extension
+ * into kb.py even on an encoder-less board: upstream KMK resolves those
+ * names to KC.NO without it, which ships a dead key. */
+test('review: media keycodes enable the KMK MediaKeys extension without an encoder', () => {
+  const mediaNames = ['MUTE', 'VOLU', 'VOLD', 'MPLY', 'MSTP', 'MNXT', 'MPRV',
+    'BRIU', 'BRID', 'EJCT', 'MFFD', 'MRWD'];
+  for (const name of mediaNames) {
+    assert.equal(pc.isValidKeycode('KC.' + name), true, 'KC.' + name);
+    const kb = pc.generateKMK({ rows: 1, cols: 1, encoder: false, sensor: false, keymap: [name] });
+    assert.ok(kb.includes('MediaKeys()'), name + ' ships MediaKeys()');
+    assert.ok(kb.includes('KC.' + name), name + ' appears in keymap');
+  }
+});
+
+/* Names that survive the trim keep working: PCMM maps to QMK KC_PCMM and
+ * layer functions emit MO/TG/TO/TT/DF in the QMK keymap. */
+test('review: surviving aliases convert to valid QMK and KMK forms', () => {
+  assert.equal(pc.kmkToQmk('KC.PCMM'), 'KC_PCMM');
+  assert.equal(pc.kmkToQmk('KC.DF(1)'), 'DF(1)');
+  assert.equal(pc.kmkToQmk('KC.TT(2)'), 'TT(2)');
+  const cfg = { rows: 1, cols: 2, encoder: false, sensor: false, keymap: ['PCMM', 'DF(1)'] };
+  const v = pc.verifyBundle(cfg, pc.generateAll(cfg));
+  assert.equal(v.checks.find(ch => ch.label === 'Firmware matrix and keymap match').valid, true);
+  assert.equal(v.valid, true);
+});
+
+/* buildLayoutProof() is public and deterministic, so sealing tampered
+ * content is one call: every artifact class must still fail the bundle
+ * round trip because verifyBundle compares each shipped file against a
+ * regenerated export, not just against the manifest. */
+test('review: regenerating the layout proof cannot launder tampered artifacts', () => {
+  const files = pc.generateAll(CFG);
+  const proofName = Object.keys(files).find(n => n.endsWith('_layout_proof.json'));
+  const base = pc.slug(pc.clampConfig(CFG).name);
+  const regen = f => {
+    delete f[proofName];
+    f[proofName] = JSON.stringify(pc.buildLayoutProof(CFG, f), null, 2) + '\n';
+  };
+  const attacks = {
+    'OpenSCAD source': f => {
+      const n = base + '_plate.scad';
+      f[n] = f[n] + '\n// tampered';
+    },
+    'KMK GPIO tuples': f => {
+      const gp = f['kb.py'].match(/GP\d+/)[0];
+      f['kb.py'] = f['kb.py'].replace(gp, gp === 'GP0' ? 'GP25' : 'GP0');
+    },
+    'QMK bundle and mirror config': f => {
+      const rows = f['qmk_bundle.json'].match(/MATRIX_ROWS \d+/)[0];
+      f['qmk_bundle.json'] = f['qmk_bundle.json'].replace(rows, 'MATRIX_ROWS 9');
+      const mirror = 'qmk/' + base + '/config.h';
+      if (files[mirror]) f[mirror] = files[mirror].replace(rows, 'MATRIX_ROWS 9');
+    },
+    'KiCad track segment': f => {
+      const n = base + '.kicad_pcb';
+      f[n] = f[n].replace(/\(start [0-9.-]+ [0-9.-]+\)/, '(start 9.9 9.9)');
+    },
+    'front copper trace draw': f => {
+      const n = base + '_F_Cu.gbr';
+      f[n] = f[n].replace('D01*', 'X5000000D01*');
+    },
+    'front silk draw': f => {
+      const n = base + '_F_SilkS.gbr';
+      f[n] = f[n].replace(/X(\d{8})Y/, (m, x) => 'X' + String(Number(x) + 500000) + 'Y');
+    },
+    'Edge.Cuts aperture': f => {
+      const n = base + '_Edge_Cuts.gbr';
+      f[n] = f[n].replace('C,0.1', 'C,2.5');
+    },
+  };
+  for (const [name, mutate] of Object.entries(attacks)) {
+    const tampered = { ...files };
+    mutate(tampered);
+    regen(tampered);
+    const v = pc.verifyBundle(CFG, tampered);
+    assert.equal(v.valid, false, name + ' + regenerated proof must fail');
   }
 });
