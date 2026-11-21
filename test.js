@@ -1026,4 +1026,16 @@ test('scadMountPoints preserves equal-length string literals while ignoring comm
     () => pc.scadMountPoints(String.raw`mount_opening("\q" == "q" ? 1 : 9, 2);`),
     /unsupported escape/
   );
+  assert.deepEqual(
+    pc.scadMountPoints(String.raw`mount_opening("\U010000" < "\uE000" ? 1 : 9, 2);`),
+    [[9, 2]]
+  );
+  assert.deepEqual(
+    pc.scadMountPoints(String.raw`mount_opening("\x00" == " " ? 1 : 9, "\u0000" == " " ? 2 : 8);`),
+    [[1, 2]]
+  );
+  assert.deepEqual(
+    pc.scadMountPoints('mount_opening("a\nb" == "ab" ? 1 : 9, "a\\\nb" == "ab" ? 2 : 8);'),
+    [[1, 2]]
+  );
 });
