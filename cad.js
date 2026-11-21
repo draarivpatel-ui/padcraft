@@ -1242,12 +1242,11 @@ function scadParseExpr(src) {
     if (ch === '"') {
       let j = i + 1, out = '';
       while (j < src.length && src[j] !== '"') {
-        if (src[j] === '\r') { j += src[j + 1] === '\n' ? 2 : 1; continue; }
         if (src[j] === '\n') { j++; continue; }
         if (src[j] === '\\') {
           if (j + 1 >= src.length) throw new Error('unterminated string in SCAD expression');
           const esc = src[j + 1];
-          if (esc === '\r') { j += src[j + 2] === '\n' ? 3 : 2; continue; }
+          if (esc === '\r' && src[j + 2] === '\n') { j += 3; continue; }
           if (esc === '\n') { j += 2; continue; }
           if (esc === 'n') { out += '\n'; j += 2; continue; }
           if (esc === 'r') { out += '\r'; j += 2; continue; }
@@ -1374,6 +1373,9 @@ function scadCompareOrder(l, r) {
     if (l > r) return 1;
     if (l === r) return 0;
     return NaN;
+  }
+  if (typeof l === 'boolean' && typeof r === 'boolean') {
+    return (l ? 1 : 0) - (r ? 1 : 0);
   }
   throw new Error('unsupported SCAD ordered comparison');
 }

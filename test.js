@@ -1038,4 +1038,12 @@ test('scadMountPoints preserves equal-length string literals while ignoring comm
     pc.scadMountPoints('mount_opening("a\nb" == "ab" ? 1 : 9, "a\\\nb" == "ab" ? 2 : 8);'),
     [[1, 2]]
   );
+  assert.deepEqual(
+    pc.scadMountPoints('mount_opening("a\rb" == "a\\rb" ? 1 : 9, false < true ? 2 : 8);'),
+    [[1, 2]]
+  );
+  assert.deepEqual(
+    pc.scadMountPoints('mount_opening("a\r\nb" == "a\\rb" ? 1 : 9, "a\\\r\nb" == "ab" ? 2 : 8);'),
+    [[1, 2]]
+  );
 });
