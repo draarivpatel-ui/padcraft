@@ -1242,7 +1242,30 @@ function scadParseExpr(src) {
     if (ch === '"') {
       let j = i + 1, out = '';
       while (j < src.length && src[j] !== '"') {
-        if (src[j] === '\\' && j + 1 < src.length) j++;
+        if (src[j] === '\\') {
+          if (j + 1 >= src.length) throw new Error('unterminated string in SCAD expression');
+          const esc = src[j + 1];
+          if (esc === 'n') { out += '\n'; j += 2; continue; }
+          if (esc === 'r') { out += '\r'; j += 2; continue; }
+          if (esc === 't') { out += '\t'; j += 2; continue; }
+          if (esc === '"' || esc === '\\') { out += esc; j += 2; continue; }
+          if (esc === 'x') {
+            const hex = src.slice(j + 2, j + 4);
+            if (!/^[0-9a-fA-F]{2}$/.test(hex)) throw new Error('invalid \\x escape in SCAD string');
+            const code = parseInt(hex, 16);
+            if (code === 0 || code > 0x7f) throw new Error('unsupported \\x escape in SCAD string');
+            out += String.fromCharCode(code); j += 4; continue;
+          }
+          if (esc === 'u' || esc === 'U') {
+            const len = esc === 'u' ? 4 : 6;
+            const hex = src.slice(j + 2, j + 2 + len);
+            if (!new RegExp('^[0-9a-fA-F]{' + len + '}$').test(hex)) throw new Error('invalid unicode escape in SCAD string');
+            const cp = parseInt(hex, 16);
+            if (cp === 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) throw new Error('invalid unicode code point in SCAD string');
+            out += String.fromCodePoint(cp); j += 2 + len; continue;
+          }
+          throw new Error('unsupported escape sequence \\' + esc + ' in SCAD string');
+        }
         out += src[j]; j++;
       }
       if (j >= src.length) throw new Error('unterminated string in SCAD expression');

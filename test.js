@@ -1014,4 +1014,16 @@ test('scadMountPoints preserves equal-length string literals while ignoring comm
     pc.scadMountPoints('position = "a // b";\nfunction pick(p) = p == "a // b" ? 5 : 8;\nmount_opening(pick(position), 6);'),
     [[5, 6]]
   );
+  assert.deepEqual(
+    pc.scadMountPoints(String.raw`mount_opening("n" == "\n" ? 1 : 9, 2);`),
+    [[9, 2]]
+  );
+  assert.deepEqual(
+    pc.scadMountPoints(String.raw`mount_opening("t" == "\t" || "r" == "\r" ? 1 : 7, "\x41" == "A" && "\u0042" == "B" ? 3 : 8);`),
+    [[7, 3]]
+  );
+  assert.throws(
+    () => pc.scadMountPoints(String.raw`mount_opening("\q" == "q" ? 1 : 9, 2);`),
+    /unsupported escape/
+  );
 });
