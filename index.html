@@ -21,12 +21,12 @@
 
   <section class="hero" aria-labelledby="heroTitle">
     <div class="hero-copy"><h1 id="heroTitle">One design.<br> <span>Every layer.</span></h1></div>
-    <div class="hero-proof" aria-label="Live design summary"><strong id="heroKeys">12</strong><span>keys, one source of truth</span><div class="proof-grid"><div><b id="heroLayers">7</b><span>Gerber layers</span></div><div><b id="heroFiles">21</b><span>source artifacts</span></div></div><p id="heroVerified" class="proof-status">Building and checking the design...</p></div>
+    <div class="hero-proof" aria-label="Live design summary"><strong id="heroKeys">12</strong><span>keys, one source of truth</span><div class="proof-grid"><div><b id="heroLayers">7</b><span>Gerber layers</span></div><div><b id="heroFiles">25</b><span>source artifacts</span></div></div><p id="heroVerified" class="proof-status">Building and checking the design...</p></div>
   </section>
 
   <section class="showcase-section" aria-labelledby="showcaseTitle">
     <div class="showcase-heading"><h2 id="showcaseTitle">Make it yours in one click</h2></div>
-    <div class="showcases" id="showcases">
+    <div class="showcases" id="showcases" role="group" aria-label="Hardware showcases">
       <button class="showcase active" type="button" data-showcase="studio" aria-pressed="true"><span class="scenario-icon" aria-hidden="true">01</span><strong>Studio control</strong><span>12 shortcuts + volume dial</span><small>MX / 3 x 4</small></button>
       <button class="showcase" type="button" data-showcase="sensor" aria-pressed="false"><span class="scenario-icon" aria-hidden="true">02</span><strong>Sensor console</strong><span>Six keys + three analog channels</span><small>MX / 2 x 3</small></button>
       <button class="showcase" type="button" data-showcase="compact" aria-pressed="false"><span class="scenario-icon" aria-hidden="true">03</span><strong>Pocket instrument</strong><span>Low profile keys + rotary dial</span><small>CHOC / 2 x 4</small></button>
@@ -35,6 +35,7 @@
   </section>
 
   <div class="status-bar"><span class="status" id="status" role="status" aria-live="polite" aria-atomic="true">Initializing design...</span><span class="status-hint">All generation and checks stay in this tab.</span></div>
+  <p id="announcer" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
 
   <main class="layout" id="workstation">
     <section class="panel preview-panel" aria-labelledby="previewTitle">
@@ -44,10 +45,10 @@
       </div><div class="net-filter"><label for="netSelect">Isolate net</label><select id="netSelect"><option value="">All nets</option></select></div></div>
       <div class="canvas-shell"><canvas id="preview" tabindex="0" role="application" aria-label="Interactive PCB layer view" aria-describedby="canvasHelp inspectInfo">Your browser needs Canvas support to display the PCB. The generated netlist and checks are listed below.</canvas><div class="canvas-legend" aria-hidden="true"><span><i class="front"></i>Front copper</span><span><i class="back"></i>Back copper</span><span><i class="wire"></i>Unrouted</span></div></div>
       <div class="inspection" id="inspectInfo" aria-live="polite" aria-atomic="true">Hover a pad or use the keyboard to inspect its physical and electrical identity.</div>
-      <p class="hint" id="canvasHelp">Hover a pad for its net. Click to isolate it. Focus the canvas and use arrow keys to inspect switches; Escape clears selection.</p>
+      <p class="hint" id="canvasHelp">Hover a pad for its net. Click to isolate it. Focus the canvas and use arrow keys to inspect switches; Enter cycles the selected nets, Escape clears.</p>
       <div class="routing-strip"><div><strong id="routingReadout">Checking connections...</strong></div><div class="routing-meter" role="progressbar" id="routingMeter" aria-label="Connected pad groups" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span id="routingFill"></span></div></div>
       <p class="routing-note">Matrix copper is generated. Dashed airwires show the controller and peripheral connections to finish in KiCad before manufacture.</p>
-      <div class="info-columns"><div class="info-card"><h3>Design metrics</h3><div id="stats" class="stats"></div></div><div class="info-card"><h3>Independent export checks</h3><div id="validation"></div></div></div>
+      <div class="info-columns"><div class="info-card"><h3>Design metrics</h3><div id="stats" class="stats"></div></div><div class="info-card"><h3>Independent export checks</h3><div id="validation"></div></div><div class="info-card"><h3>Design rule audit</h3><div id="drcAudit"></div></div></div>
       <details class="net-details"><summary>Inspect the RP2040 GPIO assignment</summary><div id="pins"></div></details>
     </section>
 
@@ -76,7 +77,7 @@
     </section>
 
     <section class="panel output" aria-labelledby="outputTitle">
-      <div class="section-head"><div><h2 id="outputTitle">Your entire design, portable</h2></div><span class="unit-tag" id="artifactCount">21 ARTIFACTS</span></div><div class="file-list" id="fileList"></div><p class="hint">Download any file, or take the ZIP with the complete QMK directory tree and a verification report. Text buffers show the first 350 lines.</p>
+      <div class="section-head"><div><h2 id="outputTitle">Your entire design, portable</h2></div><span class="unit-tag" id="artifactCount">25 ARTIFACTS</span></div><div class="file-list" id="fileList"></div><p class="hint">Download any file, or take the ZIP with the complete QMK directory tree, the fingerprinted BOM and the design rule report. Text buffers show the first 350 lines.</p>
       <details class="code-block"><summary>Inspect generated source</summary><div class="code-head"><label for="codeSelect">Artifact</label><select id="codeSelect"></select><span class="code-meta" id="codeMeta"></span></div><pre id="codePreview" class="code-preview" tabindex="0" aria-label="Generated artifact source"></pre></details>
     </section>
   </main>

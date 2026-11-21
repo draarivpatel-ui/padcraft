@@ -1580,6 +1580,25 @@ function verifyBundle(config, files) {
       info.diode_direction === 'COL2ROW' && JSON.stringify(actualKeys) === JSON.stringify(expectedKeys) && !/,\s*\)/.test(bundle['keymap.c']) &&
       JSON.stringify(kmkKeys) === JSON.stringify(board.keymap.flat()) && files['kb.py'].includes('DiodeOrientation.COL2ROW') && qmkSourcesMatch;
   } catch (_) { firmwareMatches = false; }
+  let drcReport = null, bomOk = false, csvOk = false;
+  try {
+    const drcName = Object.keys(files).find(name => name.endsWith('_drc.json'));
+    drcReport = drcName ? JSON.parse(files[drcName]) : null;
+    const bomName = Object.keys(files).find(name => name.endsWith('_bom.json'));
+    const csvName = Object.keys(files).find(name => name.endsWith('_bom.csv'));
+    const bom = bomName ? JSON.parse(files[bomName]) : null;
+    if (bom && bom.schema === BOM_SCHEMA && Array.isArray(bom.items)) {
+      const canonical = bom.items.map(item =>
+        [item.category, item.refs.join('|'), item.qty, item.value, item.footprint, item.notes].join('')).join('\n');
+      bomOk = bom.fingerprint === sha256Hex(canonical) && bom.totals.switches === board.stats.keys &&
+        bom.items.reduce((n, item) => n + item.qty, 0) === bom.totals.parts;
+    }
+    if (csvName && bom) {
+      const lines = files[csvName].split('\n').filter(line => line && !line.startsWith('#'));
+      csvOk = lines[0] === 'line,category,refs,qty,value,footprint,notes' && lines.length - 1 === bom.items.length &&
+        bom.items.every((item, i) => lines[i + 1].startsWith(item.line + ',' + item.category + ','));
+    }
+  } catch (_) { drcReport = null; bomOk = false; csvOk = false; }
   const checks = [
     { label: 'KiCad 8 schema and net references', valid: kicad.valid && pcbMatches, detail: kicad.footprints + ' footprints, ' + kicad.pads + ' pads matched' },
     { label: 'Closed STL topology and winding', valid: mesh.valid, detail: mesh.triangles + ' triangles, ' + mesh.badEdges + ' open or misoriented edges' },
@@ -1588,14 +1607,460 @@ function verifyBundle(config, files) {
     { label: 'GPIO allocation is unique', valid: new Set(board.netlist.pins.usage.map(pin => pin.pin)).size === board.netlist.pins.usage.length, detail: board.netlist.pins.usage.length + ' assigned pins' },
     { label: 'Firmware matrix and keymap match', valid: firmwareMatches, detail: board.stats.keys + ' keys in KMK and QMK' },
     { label: 'Configuration round trip', valid: files['padcraft_config.json'] === JSON.stringify(c, null, 2) + '\n', detail: 'Normalized source matches exported snapshot' },
+    { label: 'Design rule audit is clean', valid: !!(drcReport && drcReport.valid && drcReport.errors === 0),
+      detail: drcReport ? drcReport.errors + ' errors, ' + drcReport.warnings + ' warnings across ' + drcReport.checks.length + ' rules' : 'drc report missing or unreadable' },
+    { label: 'Bill of materials round trip', valid: bomOk && csvOk, detail: 'JSON fingerprint, CSV rows and part totals recomputed' },
   ];
   return { valid: checks.every(check => check.valid), checks, kicad, mesh, geometry: inspectBoard(board),
     gerbers: gerbers.map(layer => ({ name: layer.name, valid: layer.valid, flashes: layer.flashes.length, draws: layer.draws.length, errors: layer.errors })),
     drills: drills.map(drill => ({ name: drill.name, valid: drill.valid, hits: drill.hits.length, errors: drill.errors })) };
 }
 
+/* ---- Deterministic fingerprints: dependency-free UTF-8 and SHA-256 ----- */
+
+function utf8Bytes(text) {
+  const s = String(text), out = [];
+  for (let i = 0; i < s.length; i++) {
+    const cp = s.codePointAt(i);
+    if (cp > 0xFFFF) i++;
+    if (cp < 0x80) out.push(cp);
+    else if (cp < 0x800) out.push(0xC0 | (cp >> 6), 0x80 | (cp & 63));
+    else if (cp < 0x10000) out.push(0xE0 | (cp >> 12), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+    else out.push(0xF0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63));
+  }
+  return Uint8Array.from(out);
+}
+
+const SHA256_K = [
+  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+];
+
+function sha256Hex(input) {
+  const bytes = typeof input === 'string' ? utf8Bytes(input) : Uint8Array.from(input);
+  const padded = new Uint8Array((Math.floor((bytes.length + 8) / 64) + 1) * 64);
+  padded.set(bytes);
+  padded[bytes.length] = 0x80;
+  const view = new DataView(padded.buffer);
+  const bitLength = bytes.length * 8;
+  view.setUint32(padded.length - 8, Math.floor(bitLength / 4294967296));
+  view.setUint32(padded.length - 4, bitLength >>> 0);
+  const h = new Uint32Array([0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+    0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]);
+  const w = new Uint32Array(64);
+  const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+  for (let block = 0; block < padded.length; block += 64) {
+    for (let t = 0; t < 16; t++) w[t] = view.getUint32(block + t * 4);
+    for (let t = 16; t < 64; t++) {
+      const s0 = rotr(w[t - 15], 7) ^ rotr(w[t - 15], 18) ^ (w[t - 15] >>> 3);
+      const s1 = rotr(w[t - 2], 17) ^ rotr(w[t - 2], 19) ^ (w[t - 2] >>> 10);
+      w[t] = (w[t - 16] + s0 + w[t - 7] + s1) | 0;
+    }
+    const v = h.slice();
+    for (let t = 0; t < 64; t++) {
+      const s1 = rotr(v[4], 6) ^ rotr(v[4], 11) ^ rotr(v[4], 25);
+      const ch = (v[4] & v[5]) ^ (~v[4] & v[6]);
+      const t1 = (v[7] + s1 + ch + SHA256_K[t] + w[t]) | 0;
+      const s0 = rotr(v[0], 2) ^ rotr(v[0], 13) ^ rotr(v[0], 22);
+      const maj = (v[0] & v[1]) ^ (v[0] & v[2]) ^ (v[1] & v[2]);
+      const t2 = (s0 + maj) | 0;
+      v[7] = v[6]; v[6] = v[5]; v[5] = v[4]; v[4] = (v[3] + t1) | 0;
+      v[3] = v[2]; v[2] = v[1]; v[1] = v[0]; v[0] = (t1 + t2) | 0;
+    }
+    for (let i = 0; i < 8; i++) h[i] = (h[i] + v[i]) | 0;
+  }
+  return [...h].map(word => (word >>> 0).toString(16).padStart(8, '0')).join('');
+}
+
+function round3(value) {
+  return Math.round(value * 1000) / 1000;
+}
+
+/* ---- Bill of materials ------------------------------------------------ */
+
+const BOM_SCHEMA = 'padcraft.bom/1';
+
+function buildBom(config) {
+  const board = buildBoard(config);
+  const c = board.config;
+  const items = [];
+  const add = (category, refs, value, footprint, notes) => items.push({
+    line: items.length + 1, category, refs, qty: refs.length, value, footprint, notes,
+  });
+  const switches = board.components.filter(cp => cp.kind === 'switch').map(cp => cp.ref);
+  const diodes = board.components.filter(cp => cp.kind === 'diode').map(cp => cp.ref);
+  const sensors = board.components.filter(cp => cp.kind === 'sensor').map(cp => cp.ref);
+  add('electromechanical', switches,
+    c.switchType === 'Choc' ? 'Kailh Choc v1 low profile key switch' : 'Cherry MX compatible plate mount key switch',
+    c.switchType === 'Choc' ? 'Kailh PG1350 socket' : 'MX 5 pin footprint',
+    'One per matrix position');
+  add('semiconductor', diodes, '1N4148W small signal switching diode', 'SOD-123',
+    'Series diode per key; cathode faces the row rail');
+  add('module', ['U1'], 'RP2040 Pico compatible microcontroller', '2x20 pin 2.54 mm headers',
+    'Runs the exported KMK or QMK firmware');
+  if (board.layout.encoder) add('electromechanical', ['ENC1'], 'EC11 rotary encoder with push switch',
+    'EC11 vertical mount', 'Detent dial plus momentary push button');
+  if (sensors.length) add('connector', sensors, '2.54 mm single row pin header, 3 position',
+    'Conn_01x03', 'Analog sensor power, signal and ground');
+  add('hardware', board.layout.mounts.map((m, i) => 'H' + (i + 1)), 'M2 screw and standoff set',
+    f(c.mountHoleDiameter) + ' mm bore', 'One in each board corner');
+  add('fabrication', ['PCB1'], 'Two layer FR-4 printed circuit board, ' + f(c.boardThickness) + ' mm',
+    f(board.layout.width) + ' x ' + f(board.layout.height) + ' mm', 'From the exported Gerber and drill files');
+  add('fabrication', ['PLATE1'], 'Switch plate, ' + f(c.plateThickness) + ' mm',
+    'Per STL and SCAD exports', 'Cut or print from the plate model');
+  const canonical = items.map(item =>
+    [item.category, item.refs.join('|'), item.qty, item.value, item.footprint, item.notes].join('')).join('\n');
+  return {
+    schema: BOM_SCHEMA,
+    design: c.name,
+    program: c.program,
+    board: {
+      widthMm: round3(board.layout.width),
+      heightMm: round3(board.layout.height),
+      areaMm2: round3(board.layout.width * board.layout.height),
+    },
+    items,
+    totals: {
+      lines: items.length,
+      parts: items.reduce((n, item) => n + item.qty, 0),
+      switches: switches.length,
+      diodes: diodes.length,
+      gpioUsed: board.netlist.pins.needed,
+      adcChannels: board.netlist.pins.sensor.length,
+    },
+    fingerprint: sha256Hex(canonical),
+  };
+}
+
+function buildBomCsv(bom) {
+  const escape = value => {
+    const s = String(value);
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  const rows = bom.items.map(item =>
+    [item.line, item.category, item.refs.join(' '), item.qty, item.value, item.footprint, item.notes]
+      .map(escape).join(','));
+  return [
+    '# ' + bom.schema + ' | design ' + bom.design + ' | sha256 ' + bom.fingerprint,
+    'line,category,refs,qty,value,footprint,notes',
+    ...rows,
+  ].join('\n') + '\n';
+}
+
+/* ---- Design rule audit ------------------------------------------------- */
+
+const DRC_SCHEMA = 'padcraft.drc/1';
+
+/* A deterministic physical and electrical audit over the board model. Every
+ * check records the measurement it used so the report reads like a real DRC
+ * log. severity: 'error' fails the design, 'warning' is advisory, 'info' is
+ * a recorded observation. */
+function auditBoard(board) {
+  const c = board.config, layout = board.layout, pins = board.netlist.pins;
+  const checks = [];
+  const add = (id, domain, label, severity, valid, detail) => {
+    checks.push({ id, domain, label, severity, valid: !!valid, detail });
+  };
+
+  /* Mechanical domain. */
+  const outside = [];
+  for (const cp of board.components) {
+    if (cp.outline) {
+      if (cp.x - cp.outline.w / 2 < -1e-9 || cp.y - cp.outline.h / 2 < -1e-9 ||
+          cp.x + cp.outline.w / 2 > layout.width + 1e-9 || cp.y + cp.outline.h / 2 > layout.height + 1e-9) {
+        outside.push(cp.ref + ' courtyard');
+      }
+    }
+    for (const p of cp.pads) {
+      if (p.x - p.w / 2 < -1e-9 || p.y - p.h / 2 < -1e-9 ||
+          p.x + p.w / 2 > layout.width + 1e-9 || p.y + p.h / 2 > layout.height + 1e-9) {
+        outside.push(cp.ref + ' pad ' + p.num);
+      }
+    }
+  }
+  board.drillPoints.forEach((d, i) => {
+    if (d.x - d.diameter / 2 < -1e-9 || d.y - d.diameter / 2 < -1e-9 ||
+        d.x + d.diameter / 2 > layout.width + 1e-9 || d.y + d.diameter / 2 > layout.height + 1e-9) {
+      outside.push('drill hit ' + (i + 1));
+    }
+  });
+  add('mechanical.enclosure', 'mechanical', 'Bounding enclosure holds every courtyard, pad and drill', 'error',
+    outside.length === 0,
+    f(layout.width) + ' x ' + f(layout.height) + ' mm Edge.Cuts bounds ' + board.components.length +
+    ' footprints and ' + board.drillPoints.length + ' drill hits' +
+    (outside.length ? '; outside: ' + outside.slice(0, 4).join(', ') : ''));
+
+  const pitches = [];
+  for (const k of layout.keys) {
+    const right = layout.keys.find(o => o.row === k.row && o.col === k.col + 1);
+    const down = layout.keys.find(o => o.row === k.row + 1 && o.col === k.col);
+    if (right) pitches.push(Math.hypot(right.x - k.x, right.y - k.y));
+    if (down) pitches.push(Math.hypot(down.x - k.x, down.y - k.y));
+  }
+  const pitchDeviation = pitches.length ? Math.max(...pitches.map(p => Math.abs(p - c.keySpacing))) : 0;
+  add('mechanical.key-pitch', 'mechanical', 'Uniform key pitch across the matrix grid', 'error',
+    pitchDeviation < 1e-9,
+    pitches.length + ' adjacencies measured; max deviation ' + f(pitchDeviation, 6) +
+    ' mm from ' + f(c.keySpacing) + ' mm pitch');
+
+  let minWeb = Infinity;
+  for (let i = 0; i < layout.cutouts.length; i++) {
+    const a = layout.cutouts[i];
+    minWeb = Math.min(minWeb,
+      a.x - a.w / 2, a.y - a.h / 2, layout.width - a.x - a.w / 2, layout.height - a.y - a.h / 2);
+    for (let j = i + 1; j < layout.cutouts.length; j++) {
+      const b = layout.cutouts[j];
+      minWeb = Math.min(minWeb, Math.hypot(
+        Math.max(0, Math.abs(a.x - b.x) - (a.w + b.w) / 2),
+        Math.max(0, Math.abs(a.y - b.y) - (a.h + b.h) / 2)));
+    }
+  }
+  add('mechanical.plate-web', 'mechanical', 'Plate web keeps stock between openings and the edge',
+    minWeb <= 0 ? 'error' : 'warning', minWeb >= 2,
+    'minimum ' + f(minWeb) + ' mm web over ' + layout.cutouts.length +
+    ' openings; the plate wants at least 2 mm between them');
+
+  const bayViolations = [];
+  for (const cp of board.components) {
+    if (!cp.outline) continue;
+    const left = cp.x - cp.outline.w / 2, right = cp.x + cp.outline.w / 2;
+    if (cp.kind === 'mcu') {
+      if (left < layout.keyWidth - 1e-9) bayViolations.push(cp.ref + ' crosses the bay edge');
+    } else if (right > layout.keyWidth + 1e-9) bayViolations.push(cp.ref + ' enters the controller bay');
+  }
+  add('mechanical.controller-bay', 'mechanical', 'Controller bay stays clear of the switch field', 'error',
+    bayViolations.length === 0,
+    'bay starts at x=' + f(layout.keyWidth) + ' mm of ' + f(layout.width) + ' mm' +
+    (bayViolations.length ? '; ' + bayViolations.slice(0, 3).join(', ') : ''));
+
+  let minCourtyard = Infinity;
+  for (let i = 0; i < board.components.length; i++) {
+    const a = board.components[i];
+    if (!a.outline) continue;
+    for (let j = i + 1; j < board.components.length; j++) {
+      const b = board.components[j];
+      if (!b.outline) continue;
+      const ox = Math.abs(a.x - b.x) - (a.outline.w + b.outline.w) / 2;
+      const oy = Math.abs(a.y - b.y) - (a.outline.h + b.outline.h) / 2;
+      const gap = ox < 0 && oy < 0 ? Math.max(ox, oy) : Math.hypot(Math.max(0, ox), Math.max(0, oy));
+      minCourtyard = Math.min(minCourtyard, gap);
+    }
+  }
+  add('mechanical.courtyards', 'mechanical', 'Footprint courtyards keep working room',
+    minCourtyard <= 0 ? 'error' : 'warning', minCourtyard >= 0.5,
+    'minimum ' + f(minCourtyard) + ' mm between component courtyards');
+
+  const plated = board.drillPoints.filter(d => d.plated);
+  const padDrills = [];
+  for (const cp of board.components) for (const p of cp.pads) if (p.drill > 0) padDrills.push(p);
+  const orphans = plated.filter(d =>
+    !padDrills.some(p => Math.abs(p.x - d.x) < 1e-6 && Math.abs(p.y - d.y) < 1e-6 && p.drill === d.diameter));
+  const tiny = board.drillPoints.filter(d => d.diameter < 0.3);
+  const minBore = board.drillPoints.length ? Math.min(...board.drillPoints.map(d => d.diameter)) : 0;
+  add('mechanical.drills', 'mechanical', 'Every plated drill lands on its pad and bores stay fab safe', 'error',
+    orphans.length === 0 && tiny.length === 0,
+    plated.length + ' plated hits on pads, ' + (board.drillPoints.length - plated.length) +
+    ' non-plated; minimum bore ' + f(minBore) + ' mm');
+
+  /* Electrical domain. */
+  add('electrical.pin-budget', 'electrical', 'Matrix fits the RP2040 GPIO budget', 'error',
+    pins.needed <= pins.pool.length,
+    pins.needed + ' of ' + pins.pool.length + ' GPIOs allocated' +
+    (c.pinOffset ? ' after pool offset ' + c.pinOffset : '') +
+    (pins.sensor.length ? '; ' + pins.sensor.length + ' dedicated ADC channels' : ''));
+
+  const usedPins = pins.usage.map(u => u.pin);
+  const duplicated = [...new Set(usedPins.filter((p, i) => usedPins.indexOf(p) !== i))];
+  add('electrical.pin-uniqueness', 'electrical', 'Every GPIO is assigned exactly once', 'error',
+    duplicated.length === 0,
+    usedPins.length + ' assignments' +
+    (duplicated.length ? '; duplicates: ' + duplicated.join(', ') : ' on distinct pins'));
+
+  const legalPool = new Set([
+    ...RP2040_GPIO_POOL.slice(c.pinOffset).map(n => 'GP' + n), ...RP2040_ADC_POOL]);
+  const illegal = usedPins.filter(p => !legalPool.has(p));
+  add('electrical.pin-legality', 'electrical', 'Assignments stay inside the legal RP2040 pools', 'error',
+    illegal.length === 0,
+    illegal.length ? 'illegal pins: ' + illegal.join(', ') :
+    usedPins.length + ' pins inside the digital pool and GP26 to GP28');
+
+  const adcOffPool = pins.sensor.filter(p => !RP2040_ADC_POOL.includes(p));
+  add('electrical.adc-bounds', 'electrical', 'Analog channels stay on GP26 to GP28', 'error',
+    adcOffPool.length === 0 && pins.sensor.length <= RP2040_ADC_POOL.length,
+    pins.sensor.length ? pins.sensor.join(', ') + ' assigned' : 'no analog channels in this design');
+
+  const padCount = {};
+  for (const cp of board.components) for (const p of cp.pads) {
+    if (p.net) padCount[p.net.name] = (padCount[p.net.name] || 0) + 1;
+  }
+  const netOf = (cp, i) => (cp.pads[i] && cp.pads[i].net ? cp.pads[i].net.name : 'unconnected');
+  const polarityFaults = [];
+  for (const a of board.netlist.assignments) {
+    const sw = board.components.find(cp => cp.ref === a.switch);
+    const dio = board.components.find(cp => cp.ref === a.diode);
+    if (!sw || !dio) { polarityFaults.push('missing ' + (sw ? a.diode : a.switch)); continue; }
+    if (netOf(sw, 0) !== a.colNet) polarityFaults.push(a.switch + ' pad1 lands on ' + netOf(sw, 0));
+    if (netOf(sw, 1) !== a.keyNet) polarityFaults.push(a.switch + ' pad2 lands on ' + netOf(sw, 1));
+    if (netOf(dio, 0) !== a.keyNet) polarityFaults.push(a.diode + ' anode lands on ' + netOf(dio, 0));
+    if (netOf(dio, 1) !== a.rowNet) polarityFaults.push(a.diode + ' cathode lands on ' + netOf(dio, 1));
+  }
+  add('electrical.diode-polarity', 'electrical', 'COL2ROW diode polarity on every key', 'error',
+    polarityFaults.length === 0,
+    board.netlist.assignments.length + ' diodes: anode on the key node, cathode on the row rail' +
+    (polarityFaults.length ? '; faults: ' + polarityFaults.slice(0, 3).join(', ') : ''));
+
+  const keyNets = board.netlist.assignments.map(a => a.keyNet);
+  const nodesUnique = new Set(keyNets).size === keyNets.length;
+  const badNodes = keyNets.filter(n => (padCount[n] || 0) !== 2);
+  const fanoutFaults = [];
+  for (let r = 0; r < c.rows; r++) {
+    if ((padCount['ROW' + r] || 0) !== c.cols + 1) fanoutFaults.push('ROW' + r);
+  }
+  for (let col = 0; col < c.cols; col++) {
+    if ((padCount['COL' + col] || 0) !== c.rows + 1) fanoutFaults.push('COL' + col);
+  }
+  add('electrical.anti-ghosting', 'electrical', 'Series diodes isolate every key against ghosting', 'error',
+    nodesUnique && badNodes.length === 0 && fanoutFaults.length === 0,
+    keyNets.length + ' unique key nodes, each shared by exactly one switch and one diode; ' +
+    'ROW fans to ' + (c.cols + 1) + ' pads, COL to ' + (c.rows + 1) +
+    (badNodes.length + fanoutFaults.length ?
+      '; off spec: ' + [...badNodes, ...fanoutFaults].slice(0, 4).join(', ') : ''));
+
+  const rails = new Set(['GND', '3V3', 'VBUS', 'RUN', 'ADC_VREF', '3V3_EN']);
+  const quiet = board.nets.names.filter(n => !rails.has(n) && (padCount[n] || 0) < 2);
+  add('electrical.net-fanout', 'electrical', 'Every signal net reaches at least two pads', 'error',
+    quiet.length === 0,
+    board.nets.names.length + ' declared nets' +
+    (quiet.length ? '; single terminal: ' + quiet.slice(0, 4).join(', ') : ' all fanned out'));
+
+  add('electrical.ground', 'electrical', 'Ground and 3V3 returns exist', 'error',
+    (padCount['GND'] || 0) >= 1 && (!pins.sensor.length || (padCount['3V3'] || 0) >= 2),
+    'GND on ' + (padCount['GND'] || 0) + ' pads, 3V3 on ' + (padCount['3V3'] || 0));
+
+  const geometry = inspectBoard(board);
+  add('electrical.copper-clearance', 'electrical', 'Copper clearance holds at 0.2 mm', 'error',
+    geometry.geometryValid,
+    geometry.issues.length ? geometry.issues.length + ' clearance conflicts' :
+    'conservative envelope scan clean over ' + board.traces.length + ' copper features');
+
+  add('electrical.routing', 'electrical', 'Unfinished connections stay visible as airwires', 'info', true,
+    geometry.remainingRoutes + ' airwires span ' + geometry.totalConnections +
+    ' pad connections; finish in KiCad');
+
+  /* Firmware domain. */
+  const cells = board.keymap.flat();
+  const badCells = cells.filter(k => !/^KC\.[A-Z][A-Z0-9_]*$/.test(k));
+  add('firmware.keymap', 'firmware', 'Keymap covers every matrix position', 'error',
+    board.keymap.length === c.rows && board.keymap.every(r => r.length === c.cols) && badCells.length === 0,
+    cells.length + ' keycodes over a ' + c.rows + ' x ' + c.cols + ' matrix' +
+    (badCells.length ? '; invalid: ' + badCells.slice(0, 3).join(', ') : ''));
+
+  const audit = {
+    schema: DRC_SCHEMA,
+    design: c.name,
+    program: c.program,
+    checks,
+    envelope: {
+      widthMm: round3(layout.width),
+      heightMm: round3(layout.height),
+      areaMm2: round3(layout.width * layout.height),
+      boardThicknessMm: c.boardThickness,
+      plateThicknessMm: c.plateThickness,
+    },
+    matrix: {
+      rows: c.rows,
+      cols: c.cols,
+      keys: layout.keys.length,
+      pinsNeeded: pins.needed,
+      pinsAvailable: pins.pool.length,
+      adcChannels: pins.sensor.length,
+      diodeOrientation: 'COL2ROW',
+      remainingRoutes: geometry.remainingRoutes,
+    },
+  };
+  return sealAudit(audit);
+}
+
+function sealAudit(audit) {
+  audit.errors = audit.checks.filter(ch => !ch.valid && ch.severity === 'error').length;
+  audit.warnings = audit.checks.filter(ch => !ch.valid && ch.severity === 'warning').length;
+  audit.passed = audit.checks.filter(ch => ch.valid).length;
+  audit.valid = audit.errors === 0;
+  audit.fingerprint = sha256Hex(audit.checks.map(ch =>
+    ch.id + ':' + (ch.valid ? '1' : '0') + ':' + ch.detail).join('\n'));
+  return audit;
+}
+
+/* Full audit: physical and electrical rules plus a firmware cross-check that
+ * the generated KMK and QMK sources mirror the same matrix and polarity. */
+function auditDesign(config) {
+  const c = clampConfig(config);
+  const board = buildBoard(c);
+  const audit = auditBoard(board);
+  const kmk = generateKMK(c);
+  const qmkInfo = JSON.parse(generateQMK(c)['keyboard.json']);
+  const faults = [];
+  if (!kmk.includes('DiodeOrientation.COL2ROW')) faults.push('KMK diode orientation');
+  const named = [...board.netlist.pins.rows, ...board.netlist.pins.cols,
+    ...(board.netlist.pins.encoder ? Object.values(board.netlist.pins.encoder) : []),
+    ...board.netlist.pins.sensor];
+  for (const pin of named) if (!kmk.includes('board.' + pin)) faults.push('KMK missing ' + pin);
+  if (JSON.stringify(qmkInfo.matrix_pins.rows) !== JSON.stringify(board.netlist.pins.rows)) faults.push('QMK row pins diverge');
+  if (JSON.stringify(qmkInfo.matrix_pins.cols) !== JSON.stringify(board.netlist.pins.cols)) faults.push('QMK column pins diverge');
+  if (qmkInfo.diode_direction !== 'COL2ROW') faults.push('QMK diode direction');
+  audit.checks.push({
+    id: 'firmware.consistency', domain: 'firmware',
+    label: 'KMK and QMK mirror the same matrix, pins and diode direction',
+    severity: 'error', valid: faults.length === 0,
+    detail: faults.length ? faults.slice(0, 3).join(', ') :
+      'COL2ROW over ' + board.netlist.pins.needed + ' GPIOs on both firmware exports',
+  });
+  return sealAudit(audit);
+}
+
+/* ---- Layout proof: a fingerprinted manifest of the whole export -------- */
+
+const PROOF_SCHEMA = 'padcraft.proof/1';
+
+function buildLayoutProof(config, files) {
+  const c = clampConfig(config);
+  const board = buildBoard(c);
+  const entries = Object.entries(files)
+    .filter(([name]) => !name.endsWith('_layout_proof.json'))
+    .map(([name, body]) => ({ name, bytes: utf8Bytes(body).length, sha256: sha256Hex(body) }));
+  return {
+    schema: PROOF_SCHEMA,
+    design: c.name,
+    program: c.program,
+    envelope: {
+      widthMm: round3(board.layout.width),
+      heightMm: round3(board.layout.height),
+      areaMm2: round3(board.layout.width * board.layout.height),
+      boardThicknessMm: c.boardThickness,
+      plateThicknessMm: c.plateThickness,
+    },
+    matrix: {
+      rows: c.rows,
+      cols: c.cols,
+      keys: board.stats.keys,
+      pinsNeeded: board.netlist.pins.needed,
+      pinsAvailable: board.netlist.pins.pool.length,
+      diodeOrientation: 'COL2ROW',
+    },
+    files: entries,
+    fingerprint: sha256Hex(entries.map(e => e.name + ':' + e.bytes + ':' + e.sha256).join('\n')),
+  };
+}
+
 function generateAll(config) {
   const c = clampConfig(config), base = slug(c.name);
+  const bom = buildBom(c);
   const files = {
     [base + '.kicad_pcb']: generateKiCadPcb(c),
     [base + '_plate.stl']: generateSTL(c),
@@ -1607,12 +2072,16 @@ function generateAll(config) {
     'qmk_bundle.json': JSON.stringify(generateQMK(c), null, 2) + '\n',
     'padcraft_config.json': JSON.stringify(c, null, 2) + '\n',
     'preview.json': JSON.stringify(buildBoard(c), null, 2) + '\n',
+    [base + '_bom.json']: JSON.stringify(bom, null, 2) + '\n',
+    [base + '_bom.csv']: buildBomCsv(bom),
+    [base + '_drc.json']: JSON.stringify(auditDesign(c), null, 2) + '\n',
   };
   const qmk = generateQMK(c);
   for (const [name, body] of Object.entries(qmk)) {
     files['qmk/' + base + '/' + (name === 'keymap.c' ? 'keymaps/default/' : '') + name] = body;
   }
   files['verification.json'] = JSON.stringify(verifyBundle(c, files), null, 2) + '\n';
+  files[base + '_layout_proof.json'] = JSON.stringify(buildLayoutProof(c, files), null, 2) + '\n';
   return files;
 }
 
@@ -1629,8 +2098,11 @@ const CLI_HELP = [
   '  drill     Write a plated Excellon drill file',
   '  kmk       Write KMK firmware kb.py',
   '  qmk       Write a QMK bundle as JSON (keyboard.json, keymap.c, ...)',
+  '  bom       Write the fingerprinted bill of materials as JSON',
+  '  bomcsv    Write the bill of materials as CSV',
   '  preview   Write the board model as JSON for custom renderers',
   '  validate  Check a KiCad file for S-expression and netlist validity',
+  '  drc       Run the design rule audit and print the report',
   '  check     Validate every generated artifact and print a report',
   '  all       Write every artifact into --out (a directory)',
   '  presets   List the Hack Club program presets',
@@ -1739,6 +2211,14 @@ function runCLI(argv) {
     case 'scad': result = { [args.out || (slug(cfg.name) + '_plate.scad')]: generateOpenSCAD(cfg) }; break;
     case 'gerber': result = { [args.out || (slug(cfg.name) + '_F_Cu.gbr')]: generateGerberFCu(cfg) }; break;
     case 'kmk': result = { [args.out || 'kb.py']: generateKMK(cfg) }; break;
+    case 'bom': result = { [args.out || (slug(cfg.name) + '_bom.json')]: JSON.stringify(buildBom(cfg), null, 2) + '\n' }; break;
+    case 'bomcsv': result = { [args.out || (slug(cfg.name) + '_bom.csv')]: buildBomCsv(buildBom(cfg)) }; break;
+    case 'drc': {
+      const audit = auditDesign(cfg);
+      process.stdout.write(JSON.stringify(audit, null, 2) + '\n');
+      process.exitCode = audit.valid ? 0 : 1;
+      return;
+    }
     case 'qmk': result = { [args.out || 'qmk_bundle.json']: JSON.stringify(generateQMK(cfg), null, 2) + '\n' }; break;
     case 'preview': result = { [args.out || 'padcraft_preview.json']: JSON.stringify(buildBoard(cfg), null, 2) + '\n' }; break;
     case 'all': {
@@ -1763,11 +2243,14 @@ function runCLI(argv) {
         const len = Math.sqrt(t.n[0] ** 2 + t.n[1] ** 2 + t.n[2] ** 2);
         return Math.abs(len - 1) > 1e-6;
       });
+      const audit = auditDesign(cfg);
       const report = {
         board: cfg.name, program: cfg.program,
         size_mm: [board.layout.width, board.layout.height],
         keys: board.stats.keys, diodes: board.stats.diodes,
         pins: board.netlist.pins.needed, nets: board.stats.nets,
+        drc_valid: audit.valid, drc_errors: audit.errors, drc_warnings: audit.warnings,
+        drc_fingerprint: audit.fingerprint,
         kicad_valid: v.valid, kicad_errors: v.errors,
         kicad_footprints: v.footprints, kicad_pads: v.pads,
         stl_triangles: mesh.facets.length, stl_bad_normals: badNormals.length,
@@ -1798,13 +2281,14 @@ function runCLI(argv) {
 
 const api = {
   PROGRAMS, SHOWCASES, GERBER_LAYERS, DEFAULT_CONFIG, PICO_PINOUT, RP2040_GPIO_POOL, RP2040_ADC_POOL,
-  CLI_HELP,
+  BOM_SCHEMA, DRC_SCHEMA, PROOF_SCHEMA, CLI_HELP,
   f, clamp, numeric, clampConfig, applyProgram, defaultKeymap, normaliseKeymap, sanitizeKeycode, stableUuid, slug,
   computeLayout, buildPinAssignment, buildNetlist, buildBoard,
   generateKiCadPcb, tokenizeSexp, parseSexp, validateSexp, validateKiCadPcb,
   computeNormal, emitQuadTriangles, platePolygons, polygonArea, buildPlateMesh, inspectMesh, generateSTL,
   generateOpenSCAD, generateGerber, generateGerberFCu, validateGerber, generateExcellon, validateExcellon, generateKMK, generateQMK,
   distanceToSegment, segmentsIntersect, distanceSegmentToPad, inspectBoard, verifyBundle,
+  utf8Bytes, sha256Hex, round3, buildBom, buildBomCsv, auditBoard, auditDesign, sealAudit, buildLayoutProof,
   generateAll, loadConfig, parseArgs, runCLI, validateSTL,
 };
 

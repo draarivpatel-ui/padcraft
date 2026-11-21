@@ -807,10 +807,10 @@ test('routing: crossing nets and traces through a drill are reported as real def
   assert.ok(report.issues.some(issue => issue.includes('copper traces conflict')));
 });
 
-test('bundles: all four showcases have 21 portable source artifacts and verified reports', () => {
+test('bundles: all four showcases have 25 portable source artifacts and verified reports', () => {
   for (const [name, preset] of Object.entries(pc.SHOWCASES)) {
     const files = pc.generateAll(preset.config), v = pc.verifyBundle(preset.config, files);
-    assert.equal(Object.keys(files).length, 21, name);
+    assert.equal(Object.keys(files).length, 25, name);
     assert.ok(v.valid, name + JSON.stringify(v.checks)); assert.ok(v.geometry.geometryValid, name);
     assert.equal(v.gerbers.length, 7); assert.equal(v.drills.length, 2);
     assert.equal(JSON.parse(files['verification.json']).mesh.badEdges, 0);

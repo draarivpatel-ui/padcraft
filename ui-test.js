@@ -150,10 +150,12 @@ test('HTML: actual script order, syntax, control IDs and labels are coherent', (
   assert.ok(!/\b(?:src|href)="https?:\/\//.test(html), 'runtime resources are local');
 });
 
-test('DOM: initial boot generates 21 artifacts and displays verified geometry without console errors', () => {
+test('DOM: initial boot generates 25 artifacts and displays verified geometry without console errors', () => {
   const ui = boot(), state = ui.snapshot();
-  assert.equal(state.config.name, 'Studio Control'); assert.equal(Object.keys(state.files).length, 21);
+  assert.equal(state.config.name, 'Studio Control'); assert.equal(Object.keys(state.files).length, 25);
   assert.equal(state.verification.valid, true); assert.equal(state.verification.geometry.geometryValid, true);
+  assert.equal(state.audit.valid, true); assert.equal(state.audit.errors, 0);
+  assert.match(state.audit.fingerprint, /^[0-9a-f]{64}$/);
   assert.equal(ui.nodes.get('downloadZip').disabled, false);
   assert.match(ui.nodes.get('status').textContent, /19 routes to finish/);
   assert.ok(!ui.nodes.get('status').textContent.includes('DRC PASS'));
@@ -162,7 +164,7 @@ test('DOM: initial boot generates 21 artifacts and displays verified geometry wi
 
 test('DOM: DOMContentLoaded initialization is safe', () => {
   const ui = boot({ loading: true });
-  assert.equal(Object.keys(ui.snapshot().files).length, 21); assert.deepEqual(ui.errors, []);
+  assert.equal(Object.keys(ui.snapshot().files).length, 25); assert.deepEqual(ui.errors, []);
 });
 
 test('DOM: every showcase regenerates matching files, dimensions and pressed state', () => {
@@ -292,7 +294,7 @@ test('DOM: ZIP downloads contain every artifact and individual downloads use sou
   const ui = boot(); ui.nodes.get('downloadZip').click();
   assert.equal(ui.downloads.length, 1); assert.equal(ui.downloads[0].name, 'studio_control_bundle.zip');
   const bytes = new Uint8Array(await ui.blobs.get(ui.downloads[0].href).arrayBuffer());
-  const { view, offset } = findEocd(bytes); assert.equal(view.getUint16(offset + 10, true), 21);
+  const { view, offset } = findEocd(bytes); assert.equal(view.getUint16(offset + 10, true), 25);
   ui.nodes.get('fileList').children[0].click(); assert.equal(ui.downloads.length, 2);
   assert.equal(ui.downloads[1].name, 'studio_control.kicad_pcb');
   assert.equal(await ui.blobs.get(ui.downloads[1].href).text(), ui.snapshot().files['studio_control.kicad_pcb']);
@@ -321,4 +323,83 @@ test('DOM: every configuration field is bound to the live normalized model', () 
     assert.equal(ui.snapshot().verification.valid, true, id + ' retains valid exports');
   }
   assert.deepEqual(ui.errors, []);
+});
+
+test('DOM: design rule audit renders every check with a fingerprint footer', () => {
+  const ui = boot(), audit = ui.snapshot().audit, box = ui.nodes.get('drcAudit');
+  assert.equal(audit.valid, true); assert.equal(audit.errors, 0);
+  assert.ok(audit.checks.length >= 15);
+  assert.equal(box.children.length, audit.checks.length + 1);
+  box.children.slice(0, -1).forEach((row, i) => {
+    const check = audit.checks[i];
+    assert.equal(row.children[0].textContent,
+      check.valid ? (check.severity === 'info' ? 'INFO' : 'PASS') : (check.severity === 'warning' ? 'WARN' : 'FAIL'),
+      check.id);
+    assert.ok(row.children[1].textContent.includes(check.label), check.id);
+  });
+  assert.match(box.children.at(-1).textContent, /0 errors, 0 warnings \| audit [0-9a-f]{16}/);
+});
+
+test('DOM: Enter on the focused switch cycles its nets', () => {
+  const ui = boot(), canvas = ui.nodes.get('preview');
+  canvas.emit('keydown', { key: 'Home' });
+  assert.equal(ui.snapshot().selectedRef, 'SW1');
+  assert.equal(canvas.emit('keydown', { key: 'Enter' }).prevented, true);
+  assert.equal(ui.snapshot().selectedNet, 'COL0');
+  canvas.emit('keydown', { key: 'Enter' });
+  assert.match(ui.snapshot().selectedNet, /^N_/);
+  canvas.emit('keydown', { key: 'Enter' });
+  assert.equal(ui.snapshot().selectedNet, '');
+  canvas.emit('keydown', { key: 'Enter' });
+  assert.equal(ui.snapshot().selectedNet, 'COL0');
+  assert.match(ui.nodes.get('inspectInfo').textContent, /COL0/);
+});
+
+test('DOM: showcase buttons support arrow, Home and End navigation', () => {
+  const ui = boot(), buttons = ui.showcaseButtons;
+  assert.equal(buttons[0].emit('keydown', { key: 'ArrowRight' }).prevented, true);
+  assert.equal(ui.document.activeElement, buttons[1]);
+  buttons[1].emit('keydown', { key: 'End' });
+  assert.equal(ui.document.activeElement, buttons[buttons.length - 1]);
+  buttons[buttons.length - 1].emit('keydown', { key: 'ArrowRight' });
+  assert.equal(ui.document.activeElement, buttons[buttons.length - 1]);
+  buttons[buttons.length - 1].emit('keydown', { key: 'Home' });
+  assert.equal(ui.document.activeElement, buttons[0]);
+  buttons[0].emit('keydown', { key: 'ArrowLeft' });
+  assert.equal(ui.document.activeElement, buttons[0]);
+  assert.equal(buttons[0].emit('keydown', { key: 'ArrowDown' }).prevented, false);
+});
+
+test('DOM: live regions, roles and group semantics are exposed to assistive tech', () => {
+  const ui = boot();
+  assert.equal(ui.nodes.get('announcer').getAttribute('aria-live'), 'polite');
+  assert.equal(ui.nodes.get('announcer').getAttribute('role'), 'status');
+  assert.equal(ui.nodes.get('status').getAttribute('aria-live'), 'polite');
+  assert.equal(ui.nodes.get('preview').getAttribute('role'), 'application');
+  assert.equal(ui.nodes.get('showcases').getAttribute('role'), 'group');
+  assert.match(ui.nodes.get('showcases').getAttribute('aria-label'), /showcase/i);
+});
+
+test('DOM: showcase loads and resets announce through the polite live region', () => {
+  const ui = boot(), announcer = ui.nodes.get('announcer');
+  assert.match(announcer.textContent, /Studio control loaded\. 3 by 4 matrix/);
+  ui.showcaseButtons[1].click();
+  assert.match(announcer.textContent, /Sensor console loaded\. \d+ by \d+ matrix.*25 artifacts/);
+  ui.nodes.get('resetBtn').click();
+  assert.match(announcer.textContent, /reset to 3 by 4 defaults/);
+});
+
+test('DOM: invalid numeric input is flagged then recovered to the normalized value', () => {
+  const ui = boot(), rows = ui.nodes.get('rows'), announcer = ui.nodes.get('announcer');
+  rows.value = '99'; rows.emit('input');
+  assert.equal(rows.getAttribute('aria-invalid'), 'true');
+  assert.equal(ui.snapshot().config.rows, 6);
+  rows.emit('change');
+  assert.equal(rows.value, '6'); assert.equal(rows.getAttribute('aria-invalid'), 'false');
+  assert.match(announcer.textContent, /Rows adjusted to 6 \(allowed range 1 to 6\)/);
+  rows.value = 'abc'; rows.emit('input');
+  assert.equal(rows.getAttribute('aria-invalid'), 'true');
+  rows.emit('change');
+  assert.equal(rows.value, '3'); assert.equal(rows.getAttribute('aria-invalid'), 'false');
+  assert.match(announcer.textContent, /Rows adjusted to 3/);
 });

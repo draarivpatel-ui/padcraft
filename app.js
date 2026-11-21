@@ -159,16 +159,65 @@
   let currentBoard = null;
   let currentConfig = null;
   let currentVerification = null;
+  let currentAudit = null;
   let selectedNet = '';
   let selectedRef = '';
   let viewTransform = null;
   let kmState = { rows: 0, cols: 0, cells: [] };
+
+  const FIELD_LABELS = {
+    rows: 'Rows', cols: 'Columns', keySpacing: 'Key pitch', switchCutout: 'Square cutout',
+    plateThickness: 'Plate thickness', edgeMargin: 'Edge margin', boardThickness: 'Board thickness',
+    encoderDiameter: 'Dial bore', mountHoleDiameter: 'Mounting bore',
+    sensorCount: 'Analog channels', pinOffset: 'GPIO pool offset',
+  };
 
   function setStatus(msg, kind) {
     const s = $('status');
     if (!s) return;
     s.textContent = msg;
     s.className = 'status ' + (kind || '');
+  }
+
+  function announce(message) {
+    const node = $('announcer');
+    if (!node) return;
+    node.textContent = '';
+    node.textContent = message;
+  }
+
+  function fieldBounds(node) {
+    const min = node.getAttribute('min'), max = node.getAttribute('max');
+    return {
+      min: min === null ? -Infinity : Number(min),
+      max: max === null ? Infinity : Number(max),
+    };
+  }
+
+  function markFieldValidity(node) {
+    const raw = String(node.value).trim();
+    const bounds = fieldBounds(node);
+    const num = Number(raw);
+    const invalid = raw !== '' && (!Number.isFinite(num) || num < bounds.min || num > bounds.max);
+    node.setAttribute('aria-invalid', invalid ? 'true' : 'false');
+  }
+
+  /* On commit, restore an out-of-range or unreadable field to the normalized
+   * value the model actually used, and say so through the announcer. */
+  function recoverField(node, key) {
+    const normalized = readConfig()[key];
+    const raw = String(node.value).trim();
+    const num = Number(raw);
+    if (raw !== '' && Number.isFinite(num) && num === normalized) {
+      node.setAttribute('aria-invalid', 'false');
+      return;
+    }
+    node.value = String(normalized);
+    node.setAttribute('aria-invalid', 'false');
+    const bounds = fieldBounds(node);
+    const range = Number.isFinite(bounds.min) && Number.isFinite(bounds.max)
+      ? ' (allowed range ' + bounds.min + ' to ' + bounds.max + ')' : '';
+    announce((FIELD_LABELS[key] || 'Field') + ' adjusted to ' + normalized + range + '.');
   }
 
   function sanitizeKeycode(v) {
@@ -581,6 +630,27 @@
     }
   }
 
+  function renderAudit() {
+    const box = $('drcAudit');
+    if (!box) return;
+    box.innerHTML = '';
+    if (!currentAudit) return;
+    for (const check of currentAudit.checks) {
+      const row = el('div', 'check-row');
+      const state = check.valid ? (check.severity === 'info' ? 'info' : 'ok')
+        : (check.severity === 'warning' ? 'warn' : 'bad');
+      const text = check.valid ? (check.severity === 'info' ? 'INFO' : 'PASS')
+        : (check.severity === 'warning' ? 'WARN' : 'FAIL');
+      row.appendChild(el('span', 'badge ' + state, text));
+      const label = el('span', 'check-label', check.label);
+      label.appendChild(el('small', 'check-detail', check.detail));
+      row.appendChild(label); box.appendChild(row);
+    }
+    box.appendChild(el('p', 'check-fingerprint',
+      currentAudit.errors + ' errors, ' + currentAudit.warnings + ' warnings | audit ' +
+      currentAudit.fingerprint.slice(0, 16)));
+  }
+
   function renderNetFilter() {
     const select = $('netSelect');
     if (!select || !currentBoard) return;
@@ -700,9 +770,10 @@
     try {
       const config = readConfig(), files = pc.generateAll(config), board = pc.buildBoard(config);
       const verification = pc.verifyBundle(config, files);
-      currentConfig = config; currentFiles = files; currentBoard = board; currentVerification = verification;
+      const audit = pc.auditDesign(config);
+      currentConfig = config; currentFiles = files; currentBoard = board; currentVerification = verification; currentAudit = audit;
       if (!board.components.some(component => component.ref === selectedRef)) selectedRef = '';
-      renderNetFilter(); drawPreview(board); renderStats(board, config); renderPins(board); renderValidation();
+      renderNetFilter(); drawPreview(board); renderStats(board, config); renderPins(board); renderValidation(); renderAudit();
       renderFileList(files); renderCodeViewer(files);
       const count = Object.keys(files).length, routes = verification.geometry.remainingRoutes;
       $('downloadZip').disabled = !verification.valid || !verification.geometry.geometryValid;
@@ -715,12 +786,14 @@
       $('routingReadout').textContent = verification.geometry.connectedConnections + ' / ' + verification.geometry.totalConnections + ' pad connections | ' + routes + ' routes remaining';
       $('routingMeter').setAttribute('aria-valuenow', verification.geometry.continuityPercent);
       $('routingFill').style.width = verification.geometry.continuityPercent + '%';
-      setStatus((verification.valid && verification.geometry.geometryValid ? 'CHECKED' : 'CHECK FAILED') + ' | ' + config.rows + ' x ' + config.cols + ' ' + config.switchType + ' | ' + count + ' artifacts | ' + routes + ' routes to finish', verification.valid && verification.geometry.geometryValid ? 'ok' : 'error');
+      const auditNote = audit.errors ? audit.errors + ' audit errors' : audit.warnings ? audit.warnings + ' audit warnings' : 'audit clean';
+      setStatus((verification.valid && verification.geometry.geometryValid ? 'CHECKED' : 'CHECK FAILED') + ' | ' + config.rows + ' x ' + config.cols + ' ' + config.switchType + ' | ' + count + ' artifacts | ' + routes + ' routes to finish | ' + auditNote, verification.valid && verification.geometry.geometryValid ? 'ok' : 'error');
     } catch (error) {
-      currentFiles = {}; currentBoard = null; currentConfig = null; currentVerification = null; viewTransform = null;
+      currentFiles = {}; currentBoard = null; currentConfig = null; currentVerification = null; currentAudit = null; viewTransform = null;
       selectedNet = ''; selectedRef = '';
       $('downloadZip').disabled = true;
       renderFileList({}); renderCodeViewer({});
+      if ($('drcAudit')) $('drcAudit').textContent = '';
       $('validation').textContent = 'Resolve the configuration error to regenerate the design.';
       $('heroVerified').textContent = 'Generation paused. Export is unavailable.';
       $('heroKeys').textContent = '-'; $('heroFiles').textContent = '0'; $('heroLayers').textContent = '-';
@@ -783,11 +856,15 @@
   }
 
   function wire() {
-    for (const [id, , kind] of FORM_FIELDS) {
+    for (const [id, key, kind] of FORM_FIELDS) {
       const node = $(id);
       if (!node) continue;
       const evt = (kind === 'checkbox' || kind === 'select') ? 'change' : 'input';
       node.addEventListener(evt, onParamChange);
+      if (kind === 'number') {
+        node.addEventListener('input', () => markFieldValidity(node));
+        node.addEventListener('change', () => recoverField(node, key));
+      }
     }
 
     $('program').addEventListener('change', () => {
@@ -806,6 +883,7 @@
       setFormFromConfig(pc.DEFAULT_CONFIG);
       markShowcase('');
       generate();
+      announce('Configuration reset to ' + pc.DEFAULT_CONFIG.rows + ' by ' + pc.DEFAULT_CONFIG.cols + ' defaults.');
     });
     $('downloadZip').addEventListener('click', exportZip);
     $('importButton').addEventListener('click', () => $('importConfig').click());
@@ -815,11 +893,23 @@
       drawPreview(currentBoard);
     });
     $('themeToggle').addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'light' ? 'dark' : 'light'));
-    for (const button of document.querySelectorAll('[data-showcase]')) button.addEventListener('click', () => {
-      applyShowcase(button.dataset.showcase);
-      if ($('workstation').scrollIntoView) $('workstation').scrollIntoView({ block: 'start' });
-      $('preview').focus({ preventScroll: true });
-    });
+    const showcaseButtons = [...document.querySelectorAll('[data-showcase]')];
+    for (const button of showcaseButtons) {
+      button.addEventListener('click', () => {
+        applyShowcase(button.dataset.showcase);
+        if ($('workstation').scrollIntoView) $('workstation').scrollIntoView({ block: 'start' });
+        $('preview').focus({ preventScroll: true });
+      });
+      button.addEventListener('keydown', event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const index = showcaseButtons.indexOf(event.target);
+        if (index === -1) return;
+        const target = event.key === 'Home' ? 0 : event.key === 'End' ? showcaseButtons.length - 1
+          : pc.clamp(index + (event.key === 'ArrowRight' ? 1 : -1), 0, showcaseButtons.length - 1);
+        showcaseButtons[target].focus();
+      });
+    }
     $('preview').addEventListener('pointermove', event => inspectPointer(event, false));
     $('preview').addEventListener('click', event => inspectPointer(event, true));
     $('preview').addEventListener('pointerleave', () => { if (!selectedRef && !selectedNet) inspectText('Hover a pad or use arrow keys on the canvas to inspect switches.', false); });
@@ -827,6 +917,20 @@
       if (!currentBoard) return;
       const keys = currentBoard.layout.keys;
       if (event.key === 'Escape') { event.preventDefault(); selectedRef = ''; selectedNet = ''; $('netSelect').value = ''; inspectText('Selection cleared.', false); drawPreview(currentBoard); return; }
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        const component = currentBoard.components.find(cp => cp.ref === selectedRef);
+        if (!component) { inspectText('Focus a switch with the arrow keys, then press Enter to isolate its nets.', false); return; }
+        const nets = [...new Set(component.pads.map(p => (p.net ? p.net.name : '')).filter(Boolean))];
+        if (!nets.length) { inspectText(component.ref + ' has no assigned nets.', false); return; }
+        const next = nets[(nets.indexOf(selectedNet) + 1) % (nets.length + 1)] || '';
+        selectedNet = next; $('netSelect').value = next;
+        inspectText(next
+          ? component.ref + ' net ' + next + ' isolated. Enter cycles its nets; Escape clears.'
+          : 'Showing every net. ' + component.ref + ' stays selected.', !!next);
+        drawPreview(currentBoard);
+        return;
+      }
       if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
       let index = Math.max(0, keys.findIndex(key => key.ref === selectedRef));
@@ -876,8 +980,11 @@
     const scenario = pc.SHOWCASES[id];
     if (!scenario) return;
     selectedNet = ''; selectedRef = '';
-    setFormFromConfig(pc.clampConfig(scenario.config)); markShowcase(id); generate();
+    const config = pc.clampConfig(scenario.config);
+    setFormFromConfig(config); markShowcase(id); generate();
     inspectText(scenario.description + ' Hover a pad to inspect the design.', false);
+    announce(scenario.label + ' loaded. ' + config.rows + ' by ' + config.cols + ' matrix' +
+      (config.encoder ? ' with a rotary dial' : '') + ', ' + Object.keys(currentFiles).length + ' artifacts.');
   }
 
   function exportZip() {
@@ -906,6 +1013,7 @@
     globalThis.PadCraftUI = {
       getSnapshot: () => ({ config: currentConfig ? JSON.parse(JSON.stringify(currentConfig)) : null,
         files: { ...currentFiles }, verification: currentVerification ? JSON.parse(JSON.stringify(currentVerification)) : null,
+        audit: currentAudit ? JSON.parse(JSON.stringify(currentAudit)) : null,
         selectedNet, selectedRef, transform: viewTransform ? { ...viewTransform } : null }),
     };
   }
