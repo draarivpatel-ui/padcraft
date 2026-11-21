@@ -221,6 +221,21 @@ function isValidKeycode(key) {
     (VALID_KMK_KEYCODES.has(key) || LAYER_KEYCODE_RE.test(key));
 }
 
+/* The generated KMK and QMK firmware defines exactly one layer (layer 0),
+ * so a layer-switch keycode may only target layer 0. Anything higher
+ * references a layer that does not exist in the exported sources. */
+const DEFINED_KEYMAP_LAYERS = 1;
+
+function keycodeLayer(key) {
+  const match = LAYER_KEYCODE_RE.exec(String(key));
+  return match ? Number(match[2]) : null;
+}
+
+function keycodeLayerDefined(key) {
+  const layer = keycodeLayer(key);
+  return layer === null || layer < DEFINED_KEYMAP_LAYERS;
+}
+
 /* KMK spells keycodes KC.X and KC.MO(n); QMK spells them KC_X and MO(n). */
 function kmkToQmk(key) {
   const layer = LAYER_KEYCODE_RE.exec(String(key));
@@ -1145,9 +1160,14 @@ function generateOpenSCAD(config) {
   L.push('            switch_opening(key_x(c), key_y(r));');
   L.push('        if (has_encoder)');
   L.push('            encoder_opening(encoder_x(), top_band / 2 + 2);');
-  L.push('        for (mx = [edge_margin / 2, board_w - edge_margin / 2],');
-  L.push('             my = [edge_margin / 2 + top_band * 0.35, board_h - edge_margin / 2 - bottom_band * 0.35])');
-  L.push('            mount_opening(mx, my);');
+  /* Mount bores are baked from the adjusted board layout so this plate
+   * agrees with the KiCad, Gerber, drill and STL exports; the OpenSCAD
+   * parameter formulas cannot express the Pico pad lane bend, so the
+   * coordinates are regenerated here rather than recomputed in OpenSCAD. */
+  L.push('        // Mount bores are fixed to the exported board layout.');
+  for (const m of board.layout.mounts) {
+    L.push('        mount_opening(' + f(m.x) + ', ' + f(m.y) + ');');
+  }
   L.push('    }');
   L.push('}');
   L.push('');
@@ -1698,6 +1718,18 @@ function verifyBundle(config, files) {
     return file && file.valid && file.hits.length === expected.length && expected.every(drill => file.hits.some(hit => Math.abs(hit.x - drill.x) <= 0.000051 && Math.abs(hit.y - (board.layout.height - drill.y)) <= 0.000051 && Math.abs(hit.diameter - drill.diameter) < 1e-6 &&
       (!drill.slot ? !hit.slot : hit.slot && drill.slot.every((point, i) => Math.abs(point[0] - hit.slot[i][0]) <= 0.000051 && Math.abs(board.layout.height - point[1] - hit.slot[i][1]) <= 0.000051))));
   });
+  /* The OpenSCAD plate bakes its mount bores from the adjusted layout, so
+   * the exported coordinates must equal the board mounts. The SCAD writer
+   * emits through f(), the same 4-decimal channel the KiCad pad check
+   * tolerates at 0.00011. */
+  const scadName = Object.keys(files).find(name => name.endsWith('.scad'));
+  const scadMounts = scadName ? [...String(files[scadName]).matchAll(
+    /mount_opening\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)/g)]
+    .map(match => [Number(match[1]), Number(match[2])]) : [];
+  const mountNear = (px, py, m) => Math.abs(px - m.x) <= 0.00011 && Math.abs(py - m.y) <= 0.00011;
+  const scadMountsMatch = scadMounts.length === board.layout.mounts.length &&
+    board.layout.mounts.every(m => scadMounts.some(p => mountNear(p[0], p[1], m))) &&
+    scadMounts.every(p => board.layout.mounts.some(m => mountNear(p[0], p[1], m)));
   let firmwareMatches = false;
   try {
     const bundle = JSON.parse(files['qmk_bundle.json']), info = JSON.parse(bundle['keyboard.json']);
@@ -1709,7 +1741,7 @@ function verifyBundle(config, files) {
     const qmkSourcesMatch = Object.entries(bundle).every(([name, body]) => files['qmk/' + base + '/' + (name === 'keymap.c' ? 'keymaps/default/' : '') + name] === body);
     firmwareMatches = JSON.stringify(info.matrix_pins.rows) === JSON.stringify(board.netlist.pins.rows) && JSON.stringify(info.matrix_pins.cols) === JSON.stringify(board.netlist.pins.cols) &&
       info.diode_direction === 'COL2ROW' && JSON.stringify(actualKeys) === JSON.stringify(expectedKeys) && !/,\s*\)/.test(bundle['keymap.c']) &&
-      board.keymap.flat().every(isValidKeycode) &&
+      board.keymap.flat().every(key => isValidKeycode(key) && keycodeLayerDefined(key)) &&
       JSON.stringify(kmkKeys) === JSON.stringify(board.keymap.flat()) && files['kb.py'].includes('DiodeOrientation.COL2ROW') && qmkSourcesMatch;
   } catch (_) { firmwareMatches = false; }
   /* Integrity round trips: the shipped BOM, DRC report and layout proof are
@@ -1767,6 +1799,9 @@ function verifyBundle(config, files) {
     { label: 'Closed STL topology and winding', valid: mesh.valid, detail: mesh.triangles + ' triangles, ' + mesh.badEdges + ' open or misoriented edges' },
     { label: 'RS-274X layer round trip', valid: gerbers.length === Object.keys(GERBER_LAYERS).length && gerbersMatch, detail: gerbers.length + ' layers, pad positions and sizes matched' },
     { label: 'Excellon drill round trip', valid: drills.length === 2 && drillsMatch, detail: board.drillPoints.length + ' hits, diameters and plating matched' },
+    { label: 'OpenSCAD mount bores match the board layout', valid: scadMountsMatch,
+      detail: scadMountsMatch ? board.layout.mounts.length + ' bores at the adjusted layout coordinates' :
+        scadMounts.length + ' SCAD bores diverge from ' + board.layout.mounts.length + ' board mounts' },
     { label: 'GPIO allocation is unique', valid: new Set(board.netlist.pins.usage.map(pin => pin.pin)).size === board.netlist.pins.usage.length, detail: board.netlist.pins.usage.length + ' assigned pins' },
     { label: 'Firmware matrix and keymap match', valid: firmwareMatches, detail: board.stats.keys + ' keys in KMK and QMK' },
     { label: 'Configuration round trip', valid: files['padcraft_config.json'] === JSON.stringify(c, null, 2) + '\n', detail: 'Normalized source matches exported snapshot' },
@@ -2132,10 +2167,13 @@ function auditBoard(board) {
   /* Firmware domain. */
   const cells = board.keymap.flat();
   const badCells = cells.filter(k => !isValidKeycode(k));
+  const badLayers = cells.filter(k => !keycodeLayerDefined(k));
   add('firmware.keymap', 'firmware', 'Keymap covers every matrix position with valid keycodes', 'error',
-    board.keymap.length === c.rows && board.keymap.every(r => r.length === c.cols) && badCells.length === 0,
+    board.keymap.length === c.rows && board.keymap.every(r => r.length === c.cols) &&
+      badCells.length === 0 && badLayers.length === 0,
     cells.length + ' keycodes over a ' + c.rows + ' x ' + c.cols + ' matrix' +
-    (badCells.length ? '; invalid: ' + badCells.slice(0, 3).join(', ') : ''));
+    (badCells.length ? '; invalid: ' + badCells.slice(0, 3).join(', ') : '') +
+    (badLayers.length ? '; layer switch targets an undefined layer: ' + badLayers.slice(0, 3).join(', ') : ''));
 
   const audit = {
     schema: DRC_SCHEMA,
@@ -2478,7 +2516,7 @@ const api = {
   PROGRAMS, SHOWCASES, GERBER_LAYERS, DEFAULT_CONFIG, PICO_PINOUT, RP2040_GPIO_POOL, RP2040_ADC_POOL,
   BOM_SCHEMA, DRC_SCHEMA, PROOF_SCHEMA, CLI_HELP,
   f, clamp, numeric, clampConfig, applyProgram, defaultKeymap, normaliseKeymap, sanitizeKeycode, stableUuid, slug,
-  VALID_KMK_KEYCODES, isValidKeycode, kmkToQmk, pointToPadDistance, rectToSegmentDistance,
+  VALID_KMK_KEYCODES, isValidKeycode, keycodeLayerDefined, kmkToQmk, pointToPadDistance, rectToSegmentDistance,
   computeLayout, buildPinAssignment, buildNetlist, buildBoard,
   generateKiCadPcb, tokenizeSexp, parseSexp, validateSexp, validateKiCadPcb,
   computeNormal, emitQuadTriangles, platePolygons, polygonArea, buildPlateMesh, inspectMesh, generateSTL,

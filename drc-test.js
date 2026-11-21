@@ -781,7 +781,7 @@ test('review: allowlisted keycodes pass, layer keycodes convert to QMK forms', (
   assert.equal(pc.isValidKeycode('KC.NOT_A_KEY'), false);
   assert.equal(pc.kmkToQmk('KC.N1'), 'KC_1');
   assert.equal(pc.kmkToQmk('KC.MO(2)'), 'MO(2)');
-  const cfg = pc.clampConfig({ rows: 1, cols: 3, encoder: false, sensor: false, keymap: ['MO(1)', 'A', 'ENT'] });
+  const cfg = pc.clampConfig({ rows: 1, cols: 3, encoder: false, sensor: false, keymap: ['MO(0)', 'A', 'ENT'] });
   const v = pc.verifyBundle(cfg, pc.generateAll(cfg));
   assert.equal(v.checks.find(ch => ch.label === 'Firmware matrix and keymap match').valid, true);
 });
@@ -895,10 +895,58 @@ test('review: surviving aliases convert to valid QMK and KMK forms', () => {
   assert.equal(pc.kmkToQmk('KC.PCMM'), 'KC_PCMM');
   assert.equal(pc.kmkToQmk('KC.DF(1)'), 'DF(1)');
   assert.equal(pc.kmkToQmk('KC.TT(2)'), 'TT(2)');
-  const cfg = { rows: 1, cols: 2, encoder: false, sensor: false, keymap: ['PCMM', 'DF(1)'] };
+  const cfg = { rows: 1, cols: 2, encoder: false, sensor: false, keymap: ['PCMM', 'DF(0)'] };
   const v = pc.verifyBundle(cfg, pc.generateAll(cfg));
   assert.equal(v.checks.find(ch => ch.label === 'Firmware matrix and keymap match').valid, true);
   assert.equal(v.valid, true);
+});
+
+/* The shipped firmware defines exactly one layer, so a layer-switch keycode
+ * may only target layer 0. Switches into undefined layers must fail the
+ * audit and the bundle round trip with a clear error. */
+test('review: layer keycodes may only target the defined layer 0', () => {
+  for (const op of ['MO', 'TG', 'TO', 'TT', 'DF']) {
+    for (const layer of [1, 15]) {
+      const cfg = pc.clampConfig({ rows: 1, cols: 1, encoder: false, sensor: false,
+        keymap: [op + '(' + layer + ')'] });
+      const check = checkOf(pc.auditDesign(cfg), 'firmware.keymap');
+      assert.equal(check.valid, false, op + '(' + layer + ') audit');
+      assert.ok(check.detail.includes('KC.' + op + '(' + layer + ')'), op + '(' + layer + ') named');
+      assert.match(check.detail, /undefined layer/);
+      assert.equal(pc.verifyBundle(cfg, pc.generateAll(cfg)).valid, false, op + '(' + layer + ') bundle');
+    }
+    const okCfg = pc.clampConfig({ rows: 1, cols: 1, encoder: false, sensor: false,
+      keymap: [op + '(0)'] });
+    assert.equal(checkOf(pc.auditDesign(okCfg), 'firmware.keymap').valid, true, op + '(0) audit');
+    assert.equal(pc.verifyBundle(okCfg, pc.generateAll(okCfg)).valid, true, op + '(0) bundle');
+  }
+});
+
+/* The OpenSCAD plate must bore its mount holes at the same adjusted layout
+ * coordinates KiCad, Excellon and the STL use; a nominal recomputation drifts
+ * when the lane bends around the controller bay. */
+test('review: OpenSCAD mount bores match the adjusted board mounts', () => {
+  const repro = { rows: 1, cols: 1, keySpacing: 18, edgeMargin: 10, encoder: true };
+  const board = pc.buildBoard(repro);
+  assert.ok(board.layout.mounts.some(m => Math.abs(m.y - 10.9668) < 0.001),
+    'lane-bent mount coordinate present');
+  const files = pc.generateAll(repro);
+  const scadName = Object.keys(files).find(n => n.endsWith('.scad'));
+  const scadMounts = [...files[scadName].matchAll(/mount_opening\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)/g)]
+    .map(m => [Number(m[1]), Number(m[2])]);
+  assert.equal(scadMounts.length, board.layout.mounts.length);
+  for (const m of board.layout.mounts) {
+    assert.ok(scadMounts.some(p => Math.abs(p[0] - m.x) <= 0.00011 && Math.abs(p[1] - m.y) <= 0.00011),
+      'mount ' + m.x + ',' + m.y + ' emitted in SCAD');
+  }
+  const v = pc.verifyBundle(repro, files);
+  assert.equal(v.checks.find(ch => ch.label === 'OpenSCAD mount bores match the board layout').valid, true);
+  const shifted = files[scadName].replace(/mount_opening\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)/,
+    (m, x, y) => 'mount_opening(' + x + ', ' + (Number(y) + 1) + ')');
+  assert.notEqual(shifted, files[scadName]);
+  const bad = pc.verifyBundle(repro, { ...files, [scadName]: shifted });
+  assert.equal(bad.checks.find(ch => ch.label === 'OpenSCAD mount bores match the board layout').valid, false);
+  assert.equal(bad.valid, false);
 });
 
 /* buildLayoutProof() is public and deterministic, so sealing tampered

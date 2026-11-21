@@ -11,6 +11,7 @@ const pc = require('./cad.js');
 const html = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 const cadSource = fs.readFileSync(path.join(__dirname, 'cad.js'), 'utf8');
 const appSource = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+const cssSource = fs.readFileSync(path.join(__dirname, 'style.css'), 'utf8');
 
 /* A deterministic DOM fixture exercises the shipped HTML IDs and real scripts.
  * Canvas calls reject nonfinite geometry. Downloads and file reads stay in memory. */
@@ -148,6 +149,17 @@ test('HTML: actual script order, syntax, control IDs and labels are coherent', (
   for (const match of html.matchAll(/<label\b[^>]*for="([^"]+)"/g)) assert.ok(ids.includes(match[1]), 'label targets ' + match[1]);
   assert.ok(html.includes('lang="en"')); assert.ok(html.includes('class="skip-link"'));
   assert.ok(!/\b(?:src|href)="https?:\/\//.test(html), 'runtime resources are local');
+});
+
+/* .canvas-shell clips overflow, so the canvas focus ring must paint inside
+ * its own border box or keyboard users see nothing (WCAG 2.4.7). */
+test('CSS: the PCB canvas keeps a visible focus indicator inside the clipped shell', () => {
+  const shell = /\.canvas-shell\s*\{([^}]*)\}/.exec(cssSource);
+  assert.ok(shell && /overflow:\s*hidden/.test(shell[1]), 'canvas shell clips overflow');
+  const rule = /#preview:focus-visible\s*\{([^}]*)\}/.exec(cssSource);
+  assert.ok(rule, 'canvas has a focus-visible rule');
+  assert.match(rule[1], /outline-offset:\s*-\d/);
+  assert.ok(!/outline-offset:\s*\d/.test(rule[1]), 'canvas offset stays negative');
 });
 
 test('DOM: initial boot generates 25 artifacts and displays verified geometry without console errors', () => {
