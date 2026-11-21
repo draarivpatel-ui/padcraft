@@ -152,14 +152,23 @@ test('HTML: actual script order, syntax, control IDs and labels are coherent', (
 });
 
 /* .canvas-shell clips overflow, so the canvas focus ring must paint inside
- * its own border box or keyboard users see nothing (WCAG 2.4.7). */
+ * its own border box or keyboard users see nothing (WCAG 2.4.7). The ring
+ * is inset past the 8px corner radius on every side, and each theme picks a
+ * ring color that holds 4.5:1 against the dark canvas surface it overlays
+ * (the canvas paints the same dark drafting sheet in both themes). */
 test('CSS: the PCB canvas keeps a visible focus indicator inside the clipped shell', () => {
   const shell = /\.canvas-shell\s*\{([^}]*)\}/.exec(cssSource);
   assert.ok(shell && /overflow:\s*hidden/.test(shell[1]), 'canvas shell clips overflow');
+  assert.match(shell[1], /border-radius:\s*8px/, 'shell corner radius is 8px');
   const rule = /#preview:focus-visible\s*\{([^}]*)\}/.exec(cssSource);
   assert.ok(rule, 'canvas has a focus-visible rule');
-  assert.match(rule[1], /outline-offset:\s*-\d/);
+  assert.match(rule[1], /outline:\s*3px solid var\(--canvas-ring\)/);
+  assert.match(rule[1], /outline-offset:\s*-6px/);
   assert.ok(!/outline-offset:\s*\d/.test(rule[1]), 'canvas offset stays negative');
+  const dark = /--canvas-ring:\s*(#[0-9a-fA-F]{6})/.exec(cssSource);
+  const light = /:root\[data-theme="light"\][\s\S]*?--canvas-ring:\s*(#[0-9a-fA-F]{6})/.exec(cssSource);
+  assert.ok(dark && light, 'ring color is defined per theme');
+  assert.notEqual(dark[1].toLowerCase(), light[1].toLowerCase());
 });
 
 test('DOM: initial boot generates 25 artifacts and displays verified geometry without console errors', () => {

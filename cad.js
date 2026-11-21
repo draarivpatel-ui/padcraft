@@ -185,9 +185,9 @@ function sanitizeKeycode(value) {
 
 /* The standard KMK keycode space: every flat name PadCraft can legitimately
  * emit into generated KMK firmware (and into QMK via the KC_ name). Anything
- * outside this set, such as KC.NOT_A_KEY or a bare KC.MO with no layer
- * argument, is invalid and must fail design validation instead of reaching
- * a firmware artifact. */
+ * outside this set, such as KC.NOT_A_KEY, a bare KC.MO with no layer
+ * argument or any layer-switch keycode, is invalid and must fail design
+ * validation instead of reaching a firmware artifact. */
 const KMK_FLAT_KEYCODES = [
   'KC.NO', 'KC.TRNS',
   'KC.ESC', 'KC.ENT', 'KC.TAB', 'KC.SPC', 'KC.BSPC', 'KC.DEL', 'KC.INS',
@@ -213,17 +213,23 @@ const VALID_KMK_KEYCODES = new Set(KMK_FLAT_KEYCODES);
 
 /* Layer-switching keycodes take a single layer argument 0-15 and exist in
  * both KMK (KC.MO(1)) and QMK (MO(1)) forms. KMK has no OSL, and LM/LT/FD
- * take extra arguments, so only these five are emitted. */
+ * take extra arguments. The pattern is retained so kmkToQmk can still name
+ * the QMK forms, but the generated KMK firmware never imports or
+ * instantiates kmk.modules.layers.Layers, so every layer switch crashes on
+ * hardware. isValidKeycode therefore accepts flat keycodes only: no
+ * layer-switch keycode, including a switch to layer 0, is valid. */
 const LAYER_KEYCODE_RE = /^KC\.(MO|TG|TO|TT|DF)\(([0-9]|1[0-5])\)$/;
 
 function isValidKeycode(key) {
-  return typeof key === 'string' &&
-    (VALID_KMK_KEYCODES.has(key) || LAYER_KEYCODE_RE.test(key));
+  return typeof key === 'string' && VALID_KMK_KEYCODES.has(key);
 }
 
-/* The generated KMK and QMK firmware defines exactly one layer (layer 0),
- * so a layer-switch keycode may only target layer 0. Anything higher
- * references a layer that does not exist in the exported sources. */
+/* The generated KMK and QMK firmware defines exactly one layer (layer 0).
+ * A layer-switch keycode may only target layer 0 to name an existing
+ * layer; anything higher references a layer absent from the exports. This
+ * is a layer-existence check only: isValidKeycode already rejects every
+ * layer-switch keycode because the KMK firmware ships without the Layers
+ * module. */
 const DEFINED_KEYMAP_LAYERS = 1;
 
 function keycodeLayer(key) {
@@ -1137,6 +1143,21 @@ function generateOpenSCAD(config) {
   L.push('function key_y(row) = top_band + edge_margin + row * key_spacing + key_spacing / 2;');
   L.push('function encoder_x() = encoder_position == "top-left" ? edge_margin + 12 : encoder_position == "top-right" ? key_area_w - edge_margin - 12 : key_area_w / 2;');
   L.push('');
+  /* Mount bores recompute the board layout math so editing rows, cols,
+   * key_spacing, edge_margin or the bands moves the holes with board_w and
+   * board_h. The Pico pad column can reach the corner lanes, so each lane
+   * bends vertically to keep the same copper clearance the layout audit
+   * enforces. verifyBundle evaluates these expressions against
+   * board.layout.mounts. */
+  L.push('function pico_pad_cx() = key_area_w + controller_bay / 2 + 8.89;');
+  L.push('function mount_pad_top() = board_h / 2 - 19 * 2.54 / 2 - 0.85;');
+  L.push('function mount_pad_bottom() = board_h / 2 + 19 * 2.54 / 2 + 0.85;');
+  L.push('function mount_dx_eff(mx) = max(0, min(abs(mx - pico_pad_cx()), abs(mx - (pico_pad_cx() - 2 * 8.89))) - 0.85);');
+  L.push('function mount_dy_needed(mx) = mount_dx_eff(mx) >= 2.0 ? 0 : sqrt(2.0 * 2.0 - mount_dx_eff(mx) * mount_dx_eff(mx));');
+  L.push('function mount_lane_x(i) = i == 0 ? edge_margin / 2 : board_w - edge_margin / 2;');
+  L.push('function mount_lane_y(i) = i == 0 ? edge_margin / 2 + top_band * 0.35 : board_h - edge_margin / 2 - bottom_band * 0.35;');
+  L.push('function mount_bend_y(my, mx) = mount_dy_needed(mx) > 0 ? (my < board_h / 2 ? min(my, mount_pad_top() - mount_dy_needed(mx)) : max(my, mount_pad_bottom() + mount_dy_needed(mx))) : my;');
+  L.push('');
   L.push('module switch_opening(x, y) {');
   L.push('    // Exact square plate opening.');
   L.push('    translate([x - switch_cutout / 2, y - switch_cutout / 2, -1])');
@@ -1160,14 +1181,14 @@ function generateOpenSCAD(config) {
   L.push('            switch_opening(key_x(c), key_y(r));');
   L.push('        if (has_encoder)');
   L.push('            encoder_opening(encoder_x(), top_band / 2 + 2);');
-  /* Mount bores are baked from the adjusted board layout so this plate
-   * agrees with the KiCad, Gerber, drill and STL exports; the OpenSCAD
-   * parameter formulas cannot express the Pico pad lane bend, so the
-   * coordinates are regenerated here rather than recomputed in OpenSCAD. */
-  L.push('        // Mount bores are fixed to the exported board layout.');
-  for (const m of board.layout.mounts) {
-    L.push('        mount_opening(' + f(m.x) + ', ' + f(m.y) + ');');
-  }
+  /* Mount bores are parametric expressions over the lane functions above,
+   * emitted in the same order as board.layout.mounts (x lane outer, y lane
+   * inner), so the plate agrees with the KiCad, Gerber, drill and STL
+   * exports for every parameter combination. */
+  board.layout.mounts.forEach((m, k) => {
+    const i = Math.floor(k / 2), j = k % 2;
+    L.push('        mount_opening(mount_lane_x(' + i + '), mount_bend_y(mount_lane_y(' + j + '), mount_lane_x(' + i + ')));');
+  });
   L.push('    }');
   L.push('}');
   L.push('');
@@ -1195,6 +1216,240 @@ function generateOpenSCAD(config) {
   L.push('}');
   L.push('');
   return L.join('\n');
+}
+
+/* The OpenSCAD exporter writes mount_opening() calls whose arguments are
+ * expressions over the parameter variables and the mount_* functions. The
+ * evaluator below covers exactly that emitted subset: numbers, strings,
+ * booleans, identifiers, + - * / %, comparisons, && || !, ternaries,
+ * parentheses and calls to abs, min, max, sqrt or the emitted functions.
+ * Anything else throws, so a malformed or hostile expression fails the
+ * bundle check instead of being guessed. */
+const SCAD_BINPREC = { '||': 1, '&&': 2, '==': 3, '!=': 3, '<': 4, '<=': 4, '>': 4, '>=': 4, '+': 5, '-': 5, '*': 6, '/': 6, '%': 6 };
+
+function scadParseExpr(src) {
+  const tokens = [];
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') { i++; continue; }
+    if (ch === '/' && src[i + 1] === '/') { while (i < src.length && src[i] !== '\n') i++; continue; }
+    if (ch === '"') {
+      let j = i + 1, out = '';
+      while (j < src.length && src[j] !== '"') {
+        if (src[j] === '\\' && j + 1 < src.length) j++;
+        out += src[j]; j++;
+      }
+      if (j >= src.length) throw new Error('unterminated string in SCAD expression');
+      tokens.push({ t: 'str', v: out }); i = j + 1; continue;
+    }
+    const rest = src.slice(i);
+    const num = /^\d*\.?\d+(?:[eE][+-]?\d+)?/.exec(rest);
+    if (num) { tokens.push({ t: 'num', v: Number(num[0]) }); i += num[0].length; continue; }
+    const id = /^[A-Za-z_]\w*/.exec(rest);
+    if (id) { tokens.push({ t: 'id', v: id[0] }); i += id[0].length; continue; }
+    const two = src.substr(i, 2);
+    if (two === '<=' || two === '>=' || two === '==' || two === '!=' || two === '&&' || two === '||') {
+      tokens.push({ t: 'op', v: two }); i += 2; continue;
+    }
+    if ('+-*/%(),?:<>!'.indexOf(ch) !== -1) { tokens.push({ t: 'op', v: ch }); i++; continue; }
+    throw new Error('unexpected character ' + JSON.stringify(ch) + ' in SCAD expression');
+  }
+  tokens.push({ t: 'eof', v: '' });
+  let pos = 0;
+  const peek = () => tokens[pos];
+  const take = () => tokens[pos++];
+  function parseExpr() {
+    const cond = parseBinary(1);
+    if (peek().t === 'op' && peek().v === '?') {
+      take();
+      const a = parseExpr();
+      if (!(peek().t === 'op' && peek().v === ':')) throw new Error('expected : in SCAD ternary');
+      take();
+      return { k: 'tern', c: cond, a, b: parseExpr() };
+    }
+    return cond;
+  }
+  function parseBinary(minPrec) {
+    let left = parseUnary();
+    while (peek().t === 'op' && SCAD_BINPREC[peek().v] !== undefined && SCAD_BINPREC[peek().v] >= minPrec) {
+      const op = take().v;
+      left = { k: 'bin', op, l: left, r: parseBinary(SCAD_BINPREC[op] + 1) };
+    }
+    return left;
+  }
+  function parseUnary() {
+    const tok = peek();
+    if (tok.t === 'op' && (tok.v === '-' || tok.v === '!')) {
+      take();
+      return { k: tok.v === '-' ? 'neg' : 'not', e: parseUnary() };
+    }
+    return parsePrimary();
+  }
+  function parsePrimary() {
+    const tok = take();
+    if (tok.t === 'num') return { k: 'num', v: tok.v };
+    if (tok.t === 'str') return { k: 'str', v: tok.v };
+    if (tok.t === 'id') {
+      if (tok.v === 'true') return { k: 'bool', v: true };
+      if (tok.v === 'false') return { k: 'bool', v: false };
+      if (peek().t === 'op' && peek().v === '(') {
+        take();
+        const args = [];
+        if (!(peek().t === 'op' && peek().v === ')')) {
+          args.push(parseExpr());
+          while (peek().t === 'op' && peek().v === ',') { take(); args.push(parseExpr()); }
+        }
+        if (!(peek().t === 'op' && peek().v === ')')) throw new Error('expected ) in SCAD call ' + tok.v);
+        take();
+        return { k: 'call', name: tok.v, args };
+      }
+      return { k: 'var', name: tok.v };
+    }
+    if (tok.t === 'op' && tok.v === '(') {
+      const inner = parseExpr();
+      if (!(peek().t === 'op' && peek().v === ')')) throw new Error('expected ) in SCAD expression');
+      take();
+      return inner;
+    }
+    throw new Error('unexpected token ' + JSON.stringify(tok.v) + ' in SCAD expression');
+  }
+  const ast = parseExpr();
+  if (peek().t !== 'eof') throw new Error('trailing tokens in SCAD expression');
+  return ast;
+}
+
+const SCAD_BUILTINS = {
+  abs: x => Math.abs(x),
+  min: (...a) => Math.min(...a),
+  max: (...a) => Math.max(...a),
+  sqrt: x => Math.sqrt(x),
+};
+
+function scadEval(node, env) {
+  switch (node.k) {
+    case 'num': case 'str': case 'bool': return node.v;
+    case 'var':
+      if (node.name in env) return env[node.name];
+      throw new Error('undefined SCAD name ' + node.name);
+    case 'neg': return -scadEval(node.e, env);
+    case 'not': return !scadEval(node.e, env);
+    case 'tern': return scadEval(node.c, env) ? scadEval(node.a, env) : scadEval(node.b, env);
+    case 'bin': {
+      const l = scadEval(node.l, env), r = scadEval(node.r, env);
+      switch (node.op) {
+        case '+': return l + r;
+        case '-': return l - r;
+        case '*': return l * r;
+        case '/': return l / r;
+        case '%': return l % r;
+        case '<': return l < r;
+        case '<=': return l <= r;
+        case '>': return l > r;
+        case '>=': return l >= r;
+        case '==': return l === r;
+        case '!=': return l !== r;
+        case '&&': return Boolean(l && r);
+        case '||': return Boolean(l || r);
+      }
+      throw new Error('unsupported SCAD operator ' + node.op);
+    }
+    case 'call': {
+      const args = node.args.map(arg => scadEval(arg, env));
+      if (Object.prototype.hasOwnProperty.call(SCAD_BUILTINS, node.name)) {
+        return SCAD_BUILTINS[node.name](...args);
+      }
+      if (!(node.name in env)) throw new Error('unknown SCAD function ' + node.name);
+      const fn = env[node.name];
+      if (!fn || typeof fn !== 'object' || !Array.isArray(fn.scadParams) || args.length !== fn.scadParams.length) {
+        throw new Error('bad SCAD call ' + node.name);
+      }
+      const child = Object.create(env);
+      fn.scadParams.forEach((param, i) => { child[param] = args[i]; });
+      return scadEval(fn.scadBody, child);
+    }
+  }
+  throw new Error('unsupported SCAD node ' + node.k);
+}
+
+/* Top-level `name = expr;` assignments and `function name(args) = expr;`
+ * definitions, in file order. Anything inside a module body (brace depth
+ * above zero) is ignored. */
+function scadStatements(text) {
+  const stmts = [];
+  let depth = 0;
+  for (const raw of String(text).split(/\r?\n/)) {
+    const line = raw.trim();
+    if (depth === 0) {
+      let m = /^function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*=\s*(.+?);\s*(?:\/\/.*)?$/.exec(line);
+      if (m) {
+        stmts.push({ fn: m[1], params: m[2].split(',').map(s => s.trim()).filter(Boolean), expr: m[3] });
+      } else {
+        m = /^([A-Za-z_]\w*)\s*=\s*([^;]+);\s*(?:\/\/.*)?$/.exec(line);
+        if (m) stmts.push({ var: m[1], expr: m[2] });
+      }
+    }
+    for (const ch of line) { if (ch === '{') depth++; else if (ch === '}') depth--; }
+    if (depth < 0) depth = 0;
+  }
+  return stmts;
+}
+
+function scadSplitArgs(inner) {
+  const args = [];
+  let depth = 0, start = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '"') {
+      i++;
+      while (i < inner.length && inner[i] !== '"') { if (inner[i] === '\\') i++; i++; }
+      continue;
+    }
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (ch === ',' && depth === 0) { args.push(inner.slice(start, i).trim()); start = i + 1; }
+  }
+  args.push(inner.slice(start).trim());
+  return args;
+}
+
+/* Every mount_opening(...) call site in the file, as raw argument
+ * expression pairs. The module definition line is skipped. */
+function scadMountCalls(text) {
+  const src = String(text), calls = [];
+  const re = /mount_opening\s*\(/g;
+  let m;
+  while ((m = re.exec(src))) {
+    const lineStart = src.lastIndexOf('\n', m.index) + 1;
+    if (/\bmodule\s*$/.test(src.slice(lineStart, m.index))) continue;
+    const open = m.index + m[0].length - 1;
+    let depth = 1, i = open + 1;
+    for (; i < src.length && depth > 0; i++) {
+      const ch = src[i];
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      else if (ch === '"') { i++; while (i < src.length && src[i] !== '"') { if (src[i] === '\\') i++; i++; } }
+    }
+    if (depth !== 0) throw new Error('unbalanced mount_opening call in SCAD');
+    calls.push(scadSplitArgs(src.slice(open + 1, i - 1)));
+  }
+  return calls;
+}
+
+/* Evaluate the parametric mount bores of an exported .scad. Returns an
+ * array of [x, y] points in call order, or throws on any construct outside
+ * the emitted subset. */
+function scadMountPoints(text) {
+  const src = String(text);
+  const env = Object.create(null);
+  for (const st of scadStatements(src)) {
+    if (st.var !== undefined) env[st.var] = scadEval(scadParseExpr(st.expr), env);
+    else env[st.fn] = { scadParams: st.params, scadBody: scadParseExpr(st.expr) };
+  }
+  return scadMountCalls(src).map(args => {
+    if (args.length !== 2) throw new Error('mount_opening expects 2 arguments');
+    return [scadEval(scadParseExpr(args[0]), env), scadEval(scadParseExpr(args[1]), env)];
+  });
 }
 
 /* ===================================================================== *
@@ -1718,18 +1973,27 @@ function verifyBundle(config, files) {
     return file && file.valid && file.hits.length === expected.length && expected.every(drill => file.hits.some(hit => Math.abs(hit.x - drill.x) <= 0.000051 && Math.abs(hit.y - (board.layout.height - drill.y)) <= 0.000051 && Math.abs(hit.diameter - drill.diameter) < 1e-6 &&
       (!drill.slot ? !hit.slot : hit.slot && drill.slot.every((point, i) => Math.abs(point[0] - hit.slot[i][0]) <= 0.000051 && Math.abs(board.layout.height - point[1] - hit.slot[i][1]) <= 0.000051))));
   });
-  /* The OpenSCAD plate bakes its mount bores from the adjusted layout, so
-   * the exported coordinates must equal the board mounts. The SCAD writer
-   * emits through f(), the same 4-decimal channel the KiCad pad check
-   * tolerates at 0.00011. */
+  /* The OpenSCAD plate emits parametric mount bores: each mount_opening
+   * call's arguments are expressions over the exported variables and the
+   * mount_* functions, evaluated here against the shipped source rather
+   * than trusted as literals. Every argument must reference a parameter
+   * name so a baked literal cannot pass for a parametric bore, and the
+   * evaluated points must equal the board mounts. The SCAD writer emits
+   * through f(), the same 4-decimal channel the KiCad pad check tolerates
+   * at 0.00011. */
   const scadName = Object.keys(files).find(name => name.endsWith('.scad'));
-  const scadMounts = scadName ? [...String(files[scadName]).matchAll(
-    /mount_opening\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)/g)]
-    .map(match => [Number(match[1]), Number(match[2])]) : [];
+  let scadMounts = null;
+  if (scadName) {
+    try {
+      const calls = scadMountCalls(files[scadName]);
+      const parametric = calls.every(args => args.length === 2 && args.every(arg => /[A-Za-z_]/.test(arg)));
+      if (parametric) scadMounts = scadMountPoints(files[scadName]);
+    } catch (_) { scadMounts = null; }
+  }
   const mountNear = (px, py, m) => Math.abs(px - m.x) <= 0.00011 && Math.abs(py - m.y) <= 0.00011;
-  const scadMountsMatch = scadMounts.length === board.layout.mounts.length &&
+  const scadMountsMatch = !!(scadMounts && scadMounts.length === board.layout.mounts.length &&
     board.layout.mounts.every(m => scadMounts.some(p => mountNear(p[0], p[1], m))) &&
-    scadMounts.every(p => board.layout.mounts.some(m => mountNear(p[0], p[1], m)));
+    scadMounts.every(p => board.layout.mounts.some(m => mountNear(p[0], p[1], m))));
   let firmwareMatches = false;
   try {
     const bundle = JSON.parse(files['qmk_bundle.json']), info = JSON.parse(bundle['keyboard.json']);
@@ -1801,7 +2065,7 @@ function verifyBundle(config, files) {
     { label: 'Excellon drill round trip', valid: drills.length === 2 && drillsMatch, detail: board.drillPoints.length + ' hits, diameters and plating matched' },
     { label: 'OpenSCAD mount bores match the board layout', valid: scadMountsMatch,
       detail: scadMountsMatch ? board.layout.mounts.length + ' bores at the adjusted layout coordinates' :
-        scadMounts.length + ' SCAD bores diverge from ' + board.layout.mounts.length + ' board mounts' },
+        (scadMounts ? scadMounts.length : 0) + ' SCAD bores diverge from ' + board.layout.mounts.length + ' board mounts' },
     { label: 'GPIO allocation is unique', valid: new Set(board.netlist.pins.usage.map(pin => pin.pin)).size === board.netlist.pins.usage.length, detail: board.netlist.pins.usage.length + ' assigned pins' },
     { label: 'Firmware matrix and keymap match', valid: firmwareMatches, detail: board.stats.keys + ' keys in KMK and QMK' },
     { label: 'Configuration round trip', valid: files['padcraft_config.json'] === JSON.stringify(c, null, 2) + '\n', detail: 'Normalized source matches exported snapshot' },
@@ -2517,6 +2781,7 @@ const api = {
   BOM_SCHEMA, DRC_SCHEMA, PROOF_SCHEMA, CLI_HELP,
   f, clamp, numeric, clampConfig, applyProgram, defaultKeymap, normaliseKeymap, sanitizeKeycode, stableUuid, slug,
   VALID_KMK_KEYCODES, isValidKeycode, keycodeLayerDefined, kmkToQmk, pointToPadDistance, rectToSegmentDistance,
+  scadMountPoints,
   computeLayout, buildPinAssignment, buildNetlist, buildBoard,
   generateKiCadPcb, tokenizeSexp, parseSexp, validateSexp, validateKiCadPcb,
   computeNormal, emitQuadTriangles, platePolygons, polygonArea, buildPlateMesh, inspectMesh, generateSTL,

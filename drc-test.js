@@ -776,12 +776,11 @@ test('review: a nonexistent keycode fails the audit and the bundle round trip', 
 
 test('review: allowlisted keycodes pass, layer keycodes convert to QMK forms', () => {
   assert.equal(pc.isValidKeycode('KC.TRNS'), true);
-  assert.equal(pc.isValidKeycode('KC.MO(3)'), true);
   assert.equal(pc.isValidKeycode('KC.MO(16)'), false);
   assert.equal(pc.isValidKeycode('KC.NOT_A_KEY'), false);
   assert.equal(pc.kmkToQmk('KC.N1'), 'KC_1');
   assert.equal(pc.kmkToQmk('KC.MO(2)'), 'MO(2)');
-  const cfg = pc.clampConfig({ rows: 1, cols: 3, encoder: false, sensor: false, keymap: ['MO(0)', 'A', 'ENT'] });
+  const cfg = pc.clampConfig({ rows: 1, cols: 3, encoder: false, sensor: false, keymap: ['A', 'B', 'ENT'] });
   const v = pc.verifyBundle(cfg, pc.generateAll(cfg));
   assert.equal(v.checks.find(ch => ch.label === 'Firmware matrix and keymap match').valid, true);
 });
@@ -889,42 +888,46 @@ test('review: media keycodes enable the KMK MediaKeys extension without an encod
   }
 });
 
-/* Names that survive the trim keep working: PCMM maps to QMK KC_PCMM and
- * layer functions emit MO/TG/TO/TT/DF in the QMK keymap. */
+/* Names that survive the trim keep working: PCMM maps to QMK KC_PCMM. */
 test('review: surviving aliases convert to valid QMK and KMK forms', () => {
   assert.equal(pc.kmkToQmk('KC.PCMM'), 'KC_PCMM');
   assert.equal(pc.kmkToQmk('KC.DF(1)'), 'DF(1)');
   assert.equal(pc.kmkToQmk('KC.TT(2)'), 'TT(2)');
-  const cfg = { rows: 1, cols: 2, encoder: false, sensor: false, keymap: ['PCMM', 'DF(0)'] };
+  const cfg = { rows: 1, cols: 2, encoder: false, sensor: false, keymap: ['PCMM', 'A'] };
   const v = pc.verifyBundle(cfg, pc.generateAll(cfg));
   assert.equal(v.checks.find(ch => ch.label === 'Firmware matrix and keymap match').valid, true);
   assert.equal(v.valid, true);
 });
 
-/* The shipped firmware defines exactly one layer, so a layer-switch keycode
- * may only target layer 0. Switches into undefined layers must fail the
- * audit and the bundle round trip with a clear error. */
-test('review: layer keycodes may only target the defined layer 0', () => {
+/* The shipped KMK firmware never imports or instantiates the Layers
+ * module, so every layer-switch keycode crashes on hardware, including a
+ * switch to the defined layer 0. MO, TG, TO, TT and DF must fail the audit
+ * and the bundle round trip with a clear error at any layer argument. */
+test('review: every layer-switch keycode is rejected at any layer', () => {
   for (const op of ['MO', 'TG', 'TO', 'TT', 'DF']) {
-    for (const layer of [1, 15]) {
+    for (const layer of [0, 1, 15]) {
+      const key = 'KC.' + op + '(' + layer + ')';
+      assert.equal(pc.isValidKeycode(key), false, key);
       const cfg = pc.clampConfig({ rows: 1, cols: 1, encoder: false, sensor: false,
         keymap: [op + '(' + layer + ')'] });
       const check = checkOf(pc.auditDesign(cfg), 'firmware.keymap');
-      assert.equal(check.valid, false, op + '(' + layer + ') audit');
-      assert.ok(check.detail.includes('KC.' + op + '(' + layer + ')'), op + '(' + layer + ') named');
-      assert.match(check.detail, /undefined layer/);
-      assert.equal(pc.verifyBundle(cfg, pc.generateAll(cfg)).valid, false, op + '(' + layer + ') bundle');
+      assert.equal(check.valid, false, key + ' audit');
+      assert.ok(check.detail.includes(key), key + ' named');
+      assert.equal(pc.verifyBundle(cfg, pc.generateAll(cfg)).valid, false, key + ' bundle');
     }
-    const okCfg = pc.clampConfig({ rows: 1, cols: 1, encoder: false, sensor: false,
-      keymap: [op + '(0)'] });
-    assert.equal(checkOf(pc.auditDesign(okCfg), 'firmware.keymap').valid, true, op + '(0) audit');
-    assert.equal(pc.verifyBundle(okCfg, pc.generateAll(okCfg)).valid, true, op + '(0) bundle');
   }
+  /* An all-valid keymap still exports clean KMK firmware. */
+  const okCfg = pc.clampConfig({ rows: 1, cols: 3, encoder: false, sensor: false,
+    keymap: ['A', 'B', 'ENT'] });
+  const kb = pc.generateKMK(okCfg);
+  assert.ok(!/KC\.(MO|TG|TO|TT|DF)\(/.test(kb), 'no layer keycode reaches kb.py');
+  assert.equal(checkOf(pc.auditDesign(okCfg), 'firmware.keymap').valid, true);
+  assert.equal(pc.verifyBundle(okCfg, pc.generateAll(okCfg)).valid, true);
 });
 
-/* The OpenSCAD plate must bore its mount holes at the same adjusted layout
- * coordinates KiCad, Excellon and the STL use; a nominal recomputation drifts
- * when the lane bends around the controller bay. */
+/* The OpenSCAD plate emits parametric mount bores that recompute the
+ * adjusted layout coordinates, so they must equal the board mounts for the
+ * shipped parameters and track them when a parameter like cols is edited. */
 test('review: OpenSCAD mount bores match the adjusted board mounts', () => {
   const repro = { rows: 1, cols: 1, keySpacing: 18, edgeMargin: 10, encoder: true };
   const board = pc.buildBoard(repro);
@@ -932,8 +935,7 @@ test('review: OpenSCAD mount bores match the adjusted board mounts', () => {
     'lane-bent mount coordinate present');
   const files = pc.generateAll(repro);
   const scadName = Object.keys(files).find(n => n.endsWith('.scad'));
-  const scadMounts = [...files[scadName].matchAll(/mount_opening\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)/g)]
-    .map(m => [Number(m[1]), Number(m[2])]);
+  const scadMounts = pc.scadMountPoints(files[scadName]);
   assert.equal(scadMounts.length, board.layout.mounts.length);
   for (const m of board.layout.mounts) {
     assert.ok(scadMounts.some(p => Math.abs(p[0] - m.x) <= 0.00011 && Math.abs(p[1] - m.y) <= 0.00011),
@@ -941,12 +943,48 @@ test('review: OpenSCAD mount bores match the adjusted board mounts', () => {
   }
   const v = pc.verifyBundle(repro, files);
   assert.equal(v.checks.find(ch => ch.label === 'OpenSCAD mount bores match the board layout').valid, true);
-  const shifted = files[scadName].replace(/mount_opening\(\s*(-?[\d.]+)\s*,\s*(-?[\d.]+)\s*\)/,
-    (m, x, y) => 'mount_opening(' + x + ', ' + (Number(y) + 1) + ')');
+  const shifted = files[scadName].replace('mount_lane_x(1)', 'mount_lane_x(0)');
   assert.notEqual(shifted, files[scadName]);
   const bad = pc.verifyBundle(repro, { ...files, [scadName]: shifted });
   assert.equal(bad.checks.find(ch => ch.label === 'OpenSCAD mount bores match the board layout').valid, false);
   assert.equal(bad.valid, false);
+});
+
+/* Editing cols inside the exported .scad must move the right-hand mount
+ * lanes inward with board_w, landing on the same coordinates an equivalent
+ * cols=1 board layout produces. */
+test('review: OpenSCAD mount bores stay parametric under a cols edit', () => {
+  const cfg = { rows: 1, cols: 3, keySpacing: 18, edgeMargin: 10 };
+  const files = pc.generateAll(cfg);
+  const scadName = Object.keys(files).find(n => n.endsWith('.scad'));
+  const scad = files[scadName];
+  const edited = scad.replace(/^cols(\s+)= 3;/m, 'cols$1= 1;');
+  assert.notEqual(edited, scad);
+  const pts = pc.scadMountPoints(edited);
+  assert.equal(pts.length, 4);
+  const board1 = pc.buildBoard({ ...cfg, cols: 1 });
+  for (const p of pts) {
+    assert.ok(p[0] >= 0 && p[0] <= board1.layout.width && p[1] >= 0 && p[1] <= board1.layout.height,
+      'bore ' + p + ' inside the cols=1 board ' + board1.layout.width + 'x' + board1.layout.height);
+  }
+  for (const m of board1.layout.mounts) {
+    assert.ok(pts.some(p => Math.abs(p[0] - m.x) < 1e-9 && Math.abs(p[1] - m.y) < 1e-9),
+      'bore at ' + m.x + ',' + m.y + ' after cols edit');
+  }
+  assert.ok(pts.some(p => Math.abs(p[0] - 65) < 1e-9 && Math.abs(p[1] - 10.9668) < 0.001),
+    'right-hand lane moved inward to x=65');
+});
+
+/* The plate must never bake mount coordinates as literals: every
+ * mount_opening argument is an expression over the exported parameters. */
+test('review: OpenSCAD mount bores are never bare literals', () => {
+  for (const cfg of [CFG, { rows: 1, cols: 1, keySpacing: 18, edgeMargin: 10 },
+    { rows: 2, cols: 5, sensor: true, sensorCount: 2, encoder: false }]) {
+    const files = pc.generateAll(cfg);
+    const scadName = Object.keys(files).find(n => n.endsWith('.scad'));
+    assert.ok(!/mount_opening\(\s*-?[\d.]+\s*,/.test(files[scadName]), 'no literal mount_opening in ' + cfg.name);
+    assert.ok(files[scadName].includes('mount_lane_x('), 'parametric lane call present');
+  }
 });
 
 /* buildLayoutProof() is public and deterministic, so sealing tampered
