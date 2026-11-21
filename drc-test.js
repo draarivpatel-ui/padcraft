@@ -987,6 +987,54 @@ test('review: OpenSCAD mount bores are never bare literals', () => {
   }
 });
 
+/* A board name with braces lands in the emitted // Program comment. The
+ * SCAD scanners must ignore comment and string contents, or the stray {
+ * bumps the brace depth and every later top-level statement is skipped,
+ * leaving the mount bores unevaluable. */
+test('review: braces in the SCAD header comment cannot hide statements', () => {
+  const cfg = { name: 'Studio { Control', rows: 2, cols: 4, encoder: false, sensor: false };
+  const scad = pc.generateOpenSCAD(cfg);
+  assert.ok(scad.includes('Board: Studio { Control'));
+  const mounts = pc.buildBoard(cfg).layout.mounts;
+  const pts = pc.scadMountPoints(scad);
+  assert.equal(pts.length, mounts.length);
+  assert.equal(pts.length, 4);
+  assert.deepEqual(pts, mounts.map(m => [m.x, m.y]));
+  assert.equal(pc.verifyBundle(cfg, pc.generateAll(cfg)).valid, true);
+});
+
+/* mount_opening( inside a comment, a string or a block comment is not a
+ * call site: only the real emitted calls may reach the evaluator. */
+test('review: mount_opening inside comments or strings is not a call site', () => {
+  const pts = pc.scadMountPoints([
+    'edge_margin = 4;',
+    '// mount_opening(9, 9) looks like a call but is a comment',
+    '/* mount_opening(7, 7)',
+    '   still comment mount_opening(6, 6) */',
+    'note = "mount_opening(8, 8)";',
+    'mount_opening(edge_margin, edge_margin);',
+  ].join('\n'));
+  assert.deepEqual(pts, [[4, 4]]);
+});
+
+/* key_spacing and edge_margin feed the mount-bore expressions, so the
+ * SCAD header must emit them at round-trip precision: 4-decimal f()
+ * output moved the evaluated bores ~3e-4 mm off the board mounts. */
+test('review: SCAD mount parameters keep full precision for the bore math', () => {
+  const cfg = { rows: 2, cols: 4, keySpacing: 19.123449, edgeMargin: 10.123449, encoder: false, sensor: false };
+  const scad = pc.generateOpenSCAD(cfg);
+  assert.ok(scad.includes('key_spacing       = 19.123449;'));
+  assert.ok(scad.includes('edge_margin       = 10.123449;'));
+  const mounts = pc.buildBoard(cfg).layout.mounts;
+  const pts = pc.scadMountPoints(scad);
+  assert.equal(pts.length, mounts.length);
+  for (let i = 0; i < pts.length; i++) {
+    assert.ok(Math.abs(pts[i][0] - mounts[i].x) < 1e-9 && Math.abs(pts[i][1] - mounts[i].y) < 1e-9,
+      'bore ' + i + ' diverges: ' + pts[i] + ' vs ' + mounts[i].x + ',' + mounts[i].y);
+  }
+  assert.equal(pc.verifyBundle(cfg, pc.generateAll(cfg)).valid, true);
+});
+
 /* buildLayoutProof() is public and deterministic, so sealing tampered
  * content is one call: every artifact class must still fail the bundle
  * round trip because verifyBundle compares each shipped file against a

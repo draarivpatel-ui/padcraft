@@ -1113,10 +1113,15 @@ function generateOpenSCAD(config) {
   L.push('// ---- Parameters -------------------------------------------------');
   L.push('rows              = ' + c.rows + ';');
   L.push('cols              = ' + c.cols + ';');
-  L.push('key_spacing       = ' + f(c.keySpacing) + ';');
+  /* key_spacing and edge_margin feed every mount-bore expression through
+   * key_area_w, board_w and board_h, so they emit the shortest decimal
+   * that round-trips to the same double (String, not f's 4 decimals):
+   * the SCAD evaluator then sees bit-identical literals and the bores
+   * land on board.layout.mounts exactly. */
+  L.push('key_spacing       = ' + String(c.keySpacing) + ';');
   L.push('switch_cutout     = ' + f(c.switchCutout) + ';');
   L.push('plate_thickness   = ' + f(c.plateThickness) + ';');
-  L.push('edge_margin       = ' + f(c.edgeMargin) + ';');
+  L.push('edge_margin       = ' + String(c.edgeMargin) + ';');
   L.push('encoder_diameter  = ' + f(c.encoderDiameter) + ';');
   L.push('mount_hole_d      = ' + f(c.mountHoleDiameter) + ';');
   L.push('has_encoder       = ' + (c.encoder ? 'true' : 'false') + ';');
@@ -1372,13 +1377,61 @@ function scadEval(node, env) {
   throw new Error('unsupported SCAD node ' + node.k);
 }
 
+/* Comments and string literals can carry braces or the text
+ * mount_opening( — a board name like "Studio { Control" lands in the
+ * emitted header comment — so the SCAD scanners below run on a
+ * same-length copy where comments are blanked to spaces (newlines kept)
+ * and string interiors are blanked between the quotes (backslash escapes
+ * respected). Length is preserved so scadMountCalls can still slice
+ * argument text by index. */
+function scadCode(text) {
+  const src = String(text), out = src.split('');
+  const blank = (from, to) => {
+    for (let k = from; k < to; k++) {
+      if (out[k] !== '\n' && out[k] !== '\r') out[k] = ' ';
+    }
+  };
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (ch === '"') {
+      let j = i + 1;
+      while (j < src.length) {
+        if (src[j] === '\\') { j += 2; continue; }
+        if (src[j] === '"') break;
+        j++;
+      }
+      blank(i + 1, Math.min(j, src.length));
+      i = j < src.length ? j + 1 : src.length;
+      continue;
+    }
+    if (ch === '/' && src[i + 1] === '/') {
+      let j = i;
+      while (j < src.length && src[j] !== '\n') j++;
+      blank(i, j);
+      i = j;
+      continue;
+    }
+    if (ch === '/' && src[i + 1] === '*') {
+      let j = i + 2;
+      while (j < src.length && !(src[j] === '*' && src[j + 1] === '/')) j++;
+      const end = Math.min(j + 2, src.length);
+      blank(i, end);
+      i = end;
+      continue;
+    }
+    i++;
+  }
+  return out.join('');
+}
+
 /* Top-level `name = expr;` assignments and `function name(args) = expr;`
  * definitions, in file order. Anything inside a module body (brace depth
  * above zero) is ignored. */
 function scadStatements(text) {
   const stmts = [];
   let depth = 0;
-  for (const raw of String(text).split(/\r?\n/)) {
+  for (const raw of scadCode(text).split(/\r?\n/)) {
     const line = raw.trim();
     if (depth === 0) {
       let m = /^function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*=\s*(.+?);\s*(?:\/\/.*)?$/.exec(line);
@@ -1416,7 +1469,7 @@ function scadSplitArgs(inner) {
 /* Every mount_opening(...) call site in the file, as raw argument
  * expression pairs. The module definition line is skipped. */
 function scadMountCalls(text) {
-  const src = String(text), calls = [];
+  const src = scadCode(text), calls = [];
   const re = /mount_opening\s*\(/g;
   let m;
   while ((m = re.exec(src))) {
@@ -2675,6 +2728,12 @@ function loadConfig(args) {
   return clampConfig(raw);
 }
 
+/* Commands that write an artifact share the browser download's gate: the
+ * design audit must report zero errors before anything reaches disk.
+ * Warnings stay advisory and never block an export. */
+const CLI_WRITE_COMMANDS = new Set(['kicad', 'stl', 'drill', 'scad', 'gerber',
+  'kmk', 'bom', 'bomcsv', 'qmk', 'preview', 'all']);
+
 function runCLI(argv) {
   const cmd = (argv[0] || 'help').toLowerCase();
   const args = parseArgs(argv.slice(1));
@@ -2700,6 +2759,14 @@ function runCLI(argv) {
   }
 
   const cfg = loadConfig(args);
+  if (CLI_WRITE_COMMANDS.has(cmd)) {
+    const audit = auditDesign(cfg);
+    if (!audit.valid) {
+      process.stderr.write(JSON.stringify(audit, null, 2) + '\n');
+      process.exitCode = 1;
+      return;
+    }
+  }
   let result;
   switch (cmd) {
     case 'kicad': result = { [args.out || (slug(cfg.name) + '.kicad_pcb')]: generateKiCadPcb(cfg) }; break;

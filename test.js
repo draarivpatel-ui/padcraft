@@ -16,6 +16,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 
@@ -561,6 +562,43 @@ test('CLI: validate rejects a malformed KiCad file with a nonzero exit', () => {
       assert.equal(JSON.parse(e.stdout).valid, false);
     }
     assert.ok(threw, 'validate should exit nonzero for invalid input');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('CLI: artifact exports refuse to write when the design audit fails', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'padcraft-audit-'));
+  try {
+    const bad = path.join(dir, 'mo0.json');
+    fs.writeFileSync(bad, '{"rows":1,"cols":1,"keymap":["MO(0)"],"encoder":false,"sensor":false}');
+    const kb = path.join(dir, 'kb.py');
+    let status = 0, audit = null;
+    try {
+      execFileSync(process.execPath, ['cad.js', 'kmk', '--config', bad, '--out', kb],
+        { cwd: __dirname, encoding: 'utf8', stdio: 'pipe' });
+    } catch (e) {
+      status = e.status;
+      audit = JSON.parse(e.stderr);
+    }
+    assert.equal(status, 1);
+    assert.equal(audit.valid, false);
+    assert.equal(audit.errors, 1);
+    assert.ok(audit.checks.some(ch => ch.id === 'firmware.keymap' && ch.valid === false));
+    assert.equal(fs.existsSync(kb), false, 'kmk must not write on audit failure');
+    const scad = path.join(dir, 'plate.scad');
+    assert.throws(() => execFileSync(process.execPath, ['cad.js', 'scad', '--config', bad, '--out', scad],
+      { cwd: __dirname, encoding: 'utf8', stdio: 'pipe' }), 'scad must reject the same config');
+    assert.equal(fs.existsSync(scad), false, 'scad must not write on audit failure');
+    const bundle = path.join(dir, 'bundle');
+    assert.throws(() => execFileSync(process.execPath, ['cad.js', 'all', '--config', bad, '--out', bundle],
+      { cwd: __dirname, encoding: 'utf8', stdio: 'pipe' }), 'all must reject the same config');
+    assert.equal(fs.existsSync(bundle), false, 'all must not create the output dir on audit failure');
+    const good = path.join(dir, 'good.json');
+    fs.writeFileSync(good, '{"rows":1,"cols":1,"encoder":false,"sensor":false}');
+    execFileSync(process.execPath, ['cad.js', 'kmk', '--config', good, '--out', kb],
+      { cwd: __dirname, encoding: 'utf8' });
+    assert.ok(fs.existsSync(kb), 'clean config still exports');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
