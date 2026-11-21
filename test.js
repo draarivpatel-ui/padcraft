@@ -1001,3 +1001,17 @@ test('copper inspection rejects overlapping pads on distinct nets', () => {
   const [a,b] = board.components[0].pads; b.x=a.x; b.y=a.y;
   const report=pc.inspectBoard(board); assert.equal(report.geometryValid,false); assert.ok(report.issues.some(issue=>issue.includes('copper envelopes conflict')));
 });
+test('scadMountPoints preserves equal-length string literals while ignoring comments and string-embedded calls', () => {
+  assert.deepEqual(
+    pc.scadMountPoints('position = "west";\nmount_opening(position == "east" ? 1 : 9, 2);'),
+    [[9, 2]]
+  );
+  assert.deepEqual(
+    pc.scadMountPoints('note = "mount_opening(1, 2); { // }";\n// Studio { Control\nmount_opening(position == "a;b" ? 3 : 7, 4);\nposition = "a;b";'),
+    [[3, 4]]
+  );
+  assert.deepEqual(
+    pc.scadMountPoints('position = "a // b";\nfunction pick(p) = p == "a // b" ? 5 : 8;\nmount_opening(pick(position), 6);'),
+    [[5, 6]]
+  );
+});

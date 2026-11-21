@@ -1378,13 +1378,12 @@ function scadEval(node, env) {
 }
 
 /* Comments and string literals can carry braces or the text
- * mount_opening( — a board name like "Studio { Control" lands in the
- * emitted header comment — so the SCAD scanners below run on a
- * same-length copy where comments are blanked to spaces (newlines kept)
- * and string interiors are blanked between the quotes (backslash escapes
- * respected). Length is preserved so scadMountCalls can still slice
- * argument text by index. */
-function scadCode(text) {
+ * mount_opening( (for example a board name like "Studio { Control" in the
+ * emitted header comment). scadCode returns a same-length copy with
+ * comments blanked to spaces (newlines preserved), and optionally blanks
+ * string interiors when scanning structural tokens while keeping string
+ * contents intact for expression evaluation. */
+function scadCode(text, blankStrings = true) {
   const src = String(text), out = src.split('');
   const blank = (from, to) => {
     for (let k = from; k < to; k++) {
@@ -1401,7 +1400,7 @@ function scadCode(text) {
         if (src[j] === '"') break;
         j++;
       }
-      blank(i + 1, Math.min(j, src.length));
+      if (blankStrings) blank(i + 1, Math.min(j, src.length));
       i = j < src.length ? j + 1 : src.length;
       continue;
     }
@@ -1427,22 +1426,37 @@ function scadCode(text) {
 
 /* Top-level `name = expr;` assignments and `function name(args) = expr;`
  * definitions, in file order. Anything inside a module body (brace depth
- * above zero) is ignored. */
+ * above zero) is ignored. Structural matching uses blanked strings while
+ * expression slicing reads the comment-stripped source with string values
+ * intact. */
 function scadStatements(text) {
   const stmts = [];
+  const scanLines = scadCode(text, true).split(/\r?\n/);
+  const evalLines = scadCode(text, false).split(/\r?\n/);
   let depth = 0;
-  for (const raw of scadCode(text).split(/\r?\n/)) {
-    const line = raw.trim();
+  for (let idx = 0; idx < scanLines.length; idx++) {
+    const scanLine = scanLines[idx].trim();
+    const evalLine = evalLines[idx].trim();
     if (depth === 0) {
-      let m = /^function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*=\s*(.+?);\s*(?:\/\/.*)?$/.exec(line);
+      let m = /^function\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*=\s*(.+?);\s*$/.exec(scanLine);
       if (m) {
-        stmts.push({ fn: m[1], params: m[2].split(',').map(s => s.trim()).filter(Boolean), expr: m[3] });
+        const eqIdx = scanLine.indexOf('=');
+        const semiIdx = scanLine.lastIndexOf(';');
+        stmts.push({
+          fn: m[1],
+          params: m[2].split(',').map(s => s.trim()).filter(Boolean),
+          expr: evalLine.slice(eqIdx + 1, semiIdx).trim(),
+        });
       } else {
-        m = /^([A-Za-z_]\w*)\s*=\s*([^;]+);\s*(?:\/\/.*)?$/.exec(line);
-        if (m) stmts.push({ var: m[1], expr: m[2] });
+        m = /^([A-Za-z_]\w*)\s*=\s*([^;]+);\s*$/.exec(scanLine);
+        if (m) {
+          const eqIdx = scanLine.indexOf('=');
+          const semiIdx = scanLine.lastIndexOf(';');
+          stmts.push({ var: m[1], expr: evalLine.slice(eqIdx + 1, semiIdx).trim() });
+        }
       }
     }
-    for (const ch of line) { if (ch === '{') depth++; else if (ch === '}') depth--; }
+    for (const ch of scanLine) { if (ch === '{') depth++; else if (ch === '}') depth--; }
     if (depth < 0) depth = 0;
   }
   return stmts;
@@ -1469,22 +1483,22 @@ function scadSplitArgs(inner) {
 /* Every mount_opening(...) call site in the file, as raw argument
  * expression pairs. The module definition line is skipped. */
 function scadMountCalls(text) {
-  const src = scadCode(text), calls = [];
+  const scan = scadCode(text, true), evalSrc = scadCode(text, false), calls = [];
   const re = /mount_opening\s*\(/g;
   let m;
-  while ((m = re.exec(src))) {
-    const lineStart = src.lastIndexOf('\n', m.index) + 1;
-    if (/\bmodule\s*$/.test(src.slice(lineStart, m.index))) continue;
+  while ((m = re.exec(scan))) {
+    const lineStart = scan.lastIndexOf('\n', m.index) + 1;
+    if (/\bmodule\s*$/.test(scan.slice(lineStart, m.index))) continue;
     const open = m.index + m[0].length - 1;
     let depth = 1, i = open + 1;
-    for (; i < src.length && depth > 0; i++) {
-      const ch = src[i];
+    for (; i < scan.length && depth > 0; i++) {
+      const ch = scan[i];
       if (ch === '(') depth++;
       else if (ch === ')') depth--;
-      else if (ch === '"') { i++; while (i < src.length && src[i] !== '"') { if (src[i] === '\\') i++; i++; } }
+      else if (ch === '"') { i++; while (i < scan.length && scan[i] !== '"') { if (scan[i] === '\\') i++; i++; } }
     }
     if (depth !== 0) throw new Error('unbalanced mount_opening call in SCAD');
-    calls.push(scadSplitArgs(src.slice(open + 1, i - 1)));
+    calls.push(scadSplitArgs(evalSrc.slice(open + 1, i - 1)));
   }
   return calls;
 }
