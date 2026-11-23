@@ -116,6 +116,7 @@
 
   const zipHelpers = { crc32, buildZip, toBytes };
   if (typeof module !== 'undefined' && module.exports) module.exports = zipHelpers;
+  if (typeof globalThis !== 'undefined') globalThis.PadCraftZip = zipHelpers;
 
   /* =================================================================== *
    * Browser application
@@ -987,6 +988,23 @@
       (config.encoder ? ' with a rotary dial' : '') + ', ' + Object.keys(currentFiles).length + ' artifacts.');
   }
 
+  /* The audit lab loads a design it benchmarked back into the workstation.
+   * Showcase ids go through applyShowcase so aria state and announcements
+   * stay identical to the showcase buttons; custom matrices take the same
+   * normalized path an imported JSON configuration uses. */
+  function loadLabDesign(config, showcaseId) {
+    if (showcaseId && pc.SHOWCASES[showcaseId]) { applyShowcase(showcaseId); return; }
+    selectedNet = ''; selectedRef = '';
+    let normalized;
+    try { normalized = pc.clampConfig(config); } catch (error) { setStatus('Lab load failed: ' + error.message, 'error'); return; }
+    setFormFromConfig(normalized);
+    markShowcase('');
+    generate();
+    inspectText('Loaded ' + normalized.name + ' from the audit lab. Hover a pad to inspect the design.', false);
+    announce(normalized.name + ' loaded from the audit lab. ' + normalized.rows + ' by ' + normalized.cols + ' matrix.');
+    if ($('workstation').scrollIntoView) $('workstation').scrollIntoView({ block: 'start' });
+  }
+
   function exportZip() {
     if (!currentConfig || !currentVerification || !currentVerification.valid || !currentVerification.geometry.geometryValid || !Object.keys(currentFiles).length) return;
     try {
@@ -1015,7 +1033,15 @@
         files: { ...currentFiles }, verification: currentVerification ? JSON.parse(JSON.stringify(currentVerification)) : null,
         audit: currentAudit ? JSON.parse(JSON.stringify(currentAudit)) : null,
         selectedNet, selectedRef, transform: viewTransform ? { ...viewTransform } : null }),
+      loadConfig: loadLabDesign,
+      applyShowcase,
+      downloadText,
     };
+    /* The lab is optional: without pad-lab.js or a full DOM the fallback
+     * note inside #labRoot stays and the workstation is unaffected. */
+    if (globalThis.PadCraftLab && typeof globalThis.PadCraftLab.mount === 'function') {
+      try { globalThis.PadCraftLab.mount($('labRoot'), pc, PadCraftUI); } catch (error) { /* lab is optional */ }
+    }
   }
 
   if (document.readyState === 'loading') {

@@ -142,7 +142,7 @@ test('ZIP: empty archives work and ambiguous paths are rejected', () => {
 
 test('HTML: actual script order, syntax, control IDs and labels are coherent', () => {
   const scripts = [...html.matchAll(/<script(?:\s+src="([^"]+)")?[^>]*>([\s\S]*?)<\/script>/g)];
-  assert.deepEqual(scripts.map(match => match[1]), ['cad.js', 'app.js']);
+  assert.deepEqual(scripts.map(match => match[1]), ['cad.js', 'pad-lab.js', 'app.js']);
   for (const script of scripts) new vm.Script(script[1] ? fs.readFileSync(path.join(__dirname, script[1]), 'utf8') : script[2]);
   const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1]);
   assert.equal(new Set(ids).size, ids.length);

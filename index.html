@@ -80,9 +80,15 @@
       <div class="section-head"><div><h2 id="outputTitle">Your entire design, portable</h2></div><span class="unit-tag" id="artifactCount">25 ARTIFACTS</span></div><div class="file-list" id="fileList"></div><p class="hint">Download any file, or take the ZIP with the complete QMK directory tree, the fingerprinted BOM and the design rule report. Text buffers show the first 350 lines.</p>
       <details class="code-block"><summary>Inspect generated source</summary><div class="code-head"><label for="codeSelect">Artifact</label><select id="codeSelect"></select><span class="code-meta" id="codeMeta"></span></div><pre id="codePreview" class="code-preview" tabindex="0" aria-label="Generated artifact source"></pre></details>
     </section>
+
+    <section class="panel lab" aria-labelledby="labTitle">
+      <div class="section-head"><div><h2 id="labTitle">DFM and matrix scaling lab</h2></div><span class="unit-tag">DETERMINISTIC AUDIT</span></div>
+      <div id="labRoot"><p class="hint">The audit lab module (pad-lab.js) did not load. Every export above still works.</p></div>
+    </section>
   </main>
   <footer class="footer"><p>Built for people who build hardware. Generated layouts are an inspectable starting point; finish routing and perform KiCad DRC and component fit checks before fabrication.</p><p class="footer-links"><a href="README.md">Engineering guide</a><a href="DEVPOST_UPGRADE.md">Project story</a><a href="LICENSE">MIT License</a><span>Static GitHub Pages / No build step</span></p></footer>
   <script src="cad.js"></script>
+  <script src="pad-lab.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

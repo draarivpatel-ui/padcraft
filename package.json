@@ -3,7 +3,7 @@
   "version": "2.0.0",
   "private": true,
   "scripts": {
-    "test": "node --test --test-reporter=spec test.js ui-test.js drc-test.js"
+    "test": "node --test --test-reporter=spec test.js ui-test.js drc-test.js pad-lab.test.js"
   },
   "engines": {
     "node": ">=22"

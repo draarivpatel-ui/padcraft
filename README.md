@@ -11,7 +11,7 @@ PadCraft is a browser engineering workstation for RP2040 macropads. A single nor
 1. Click **48-key stress test** to generate the largest supported matrix with an encoder and three analog headers.
 2. Hover any gold pad to see its reference, net, coordinates and hole size. Click it to isolate that net.
 3. Read the export checks and electrical continuity meter. Dashed airwires identify the connections still to route.
-4. Download the ZIP: **21 artifacts**, including seven Gerber layers, two drill files and a complete QMK folder tree.
+4. Download the ZIP: **25 artifacts**, including seven Gerber layers, two drill files, BOM, DRC and layout proof reports, and a complete QMK folder tree.
 
 ### Showcase designs
 
@@ -44,7 +44,17 @@ python3 -m http.server 8000
 - **Keyboard access:** Tab reaches all controls; arrow keys, Home and End inspect switches on the canvas; Escape clears the selection. Alt plus arrow keys navigate keymap cells. Ctrl or Command plus S downloads the bundle; Ctrl or Command plus Enter rechecks it.
 - **Resilient execution:** canvas dimensions respect device pixel ratio and observed element resizes. Missing Canvas or restricted storage leaves source generation available. Failed generation clears stale files and disables bundle export.
 
-## The 21 exported artifacts
+## DFM and matrix scaling lab
+
+The workstation ships an optional deterministic lab panel (`pad-lab.js`) that audits designs against the real generator, verifier and geometry screen. If the module fails to load, the workstation is unaffected.
+
+- **Benchmark comparator:** the four shipped presets plus four stress matrices (2x2 Choc compact, 3x4 MX with encoder, 4x4 MX with three ADC channels, 6x7 MX full peripheral) report board dimensions, GPIO use against the GP0 to GP22 and GP26 to GP28 pools, STL triangle count and signed volume, PTH and NPTH drill counts, copper and geometry findings, remaining routes and the 25-artifact count. Clicking a row loads that exact design into the workstation.
+- **Two interactive SVG charts:** a matrix scaling frontier plotting board area against RP2040 GPIO utilization for MX and Choc across fifteen matrices (1x2 through 6x8), and a manufacturing breakdown comparing drill operations, plate volume and remaining routes per benchmarked design. Markers and columns are clickable and keyboard focusable with transparent hit targets.
+- **Audited DFM proof brief:** cycle-safe, depth-bounded canonical JSON sealed by one cached pure-JS FIPS 180-4 SHA-256 digest. The on-page fingerprint, JSON download, formula-injection-safe CSV and Markdown report stamp the identical digest, with verify-digest and one-unit tamper-demo controls.
+- **Reloadable state:** a strict fail-closed `#pclab=` URL hash restores a selected benchmark or matrix across reloads.
+- **In-page self-tests:** 24 deterministic checks covering SHA-256 known answers, STL watertightness, Gerber and drill headers, GPIO pool non-overlap, ZIP CRC32, digest parity across all four export surfaces, tamper rejection and hash round-trip.
+
+## The 25 exported artifacts
 
 | Artifact | Purpose |
 | --- | --- |
@@ -63,6 +73,9 @@ python3 -m http.server 8000
 | `qmk/<name>/config.h`, `qmk/<name>/rules.mk` | QMK configuration and enabled features |
 | `qmk_bundle.json` | The same four QMK sources as a JSON object |
 | `padcraft_config.json`, `preview.json` | Normalized configuration and complete placement/netlist snapshots |
+| `<name>_bom.json`, `<name>_bom.csv` | Bill of materials with per-line categories, references, quantities and a design fingerprint |
+| `<name>_drc.json` | Design rule audit: pitch, enclosure, plate webs, controller bay, drills, pins, keymap, firmware and copper checks |
+| `<name>_layout_proof.json` | Manifest binding the design identity to a digest of every other artifact |
 | `verification.json` | Export round trips, mesh topology, volume checks, geometry findings and remaining connection groups |
 
 Gerber files use RS-274X `FSLAX36Y36` coordinates in millimetres. Roundrect apertures use additive rectangle and circle primitives. All Gerber and drill files share a bottom-left Cartesian origin; KiCad and the interactive canvas use the corresponding top-left board coordinates. The ZIP stores UTF-8 filenames, CRC32 checksums and matching local/central directory records.
@@ -89,15 +102,19 @@ The model distinguishes MX and Choc electrical and support holes. The Pico uses 
 Run the entire suite with Node 22 or newer:
 
 ```sh
-node --test test.js ui-test.js
+npm test
 ```
 
-Verified on Node **v24.16.0**: **111 tests passed, 0 failed, 0 skipped**.
+which runs `node --test --test-reporter=spec test.js ui-test.js drc-test.js pad-lab.test.js`.
+
+Verified on Node **v26.8.1**: **489 tests passed, 0 failed, 0 skipped**.
 
 The suite includes:
 
-- 88 engine, export, geometry, firmware and CLI tests.
-- 23 ZIP, shipped HTML syntax and DOM behavior tests, including every configuration field, four presets, imports, downloads, keyboard inspection, net isolation, themes, resize and failure recovery.
+- 90 engine, export, geometry, firmware and CLI tests.
+- 88 design rule and audit regression tests across the full legal configuration space.
+- 30 ZIP, shipped HTML syntax and DOM behavior tests, including every configuration field, four presets, imports, downloads, keyboard inspection, net isolation, themes, resize and failure recovery.
+- 281 lab tests: SHA-256 known answers and a 0 to 160 byte boundary sweep against Node `crypto`, canonical-JSON ordering, cycle and depth bounds, hostile `#pclab=` and `__proto__` fuzz, CSV formula escaping, digest parity and tamper rejection, preset and matrix sweep invariants against the real engine, ZIP CRC32 verification and fixture-DOM wiring of every lab control.
 - A 48-configuration geometry sweep covering every supported matrix size at minimum pitch and margin, with mixed MX/Choc switches and all peripherals.
 - A 20-board KiCad matrix sweep, required sections, pad/net correspondence, duplicate references, numeric geometry and unique identifiers.
 - Actual emitted STL parsing, opposite edge incidence, positive signed volume and independent polygon-area volume comparison.
@@ -125,7 +142,7 @@ node cad.js check --rows 4 --cols 5
 node cad.js validate --in board.kicad_pcb
 ```
 
-`check` reports export validity, mesh topology, remaining routes and geometry findings. `all` writes the same 21 artifacts and creates the nested QMK directories.
+`check` reports export validity, mesh topology, remaining routes and geometry findings. `all` writes the same 25 artifacts and creates the nested QMK directories.
 
 ## From the workstation to hardware
 
@@ -139,8 +156,10 @@ KMK firmware uses CircuitPython and the KMK library on the target Pico; place `k
 | --- | --- |
 | `cad.js` | Geometry, netlist, placement, topology and connectivity checks, exporters, parsers and CLI |
 | `app.js` | Dependency-free ZIP writer, canvas inspection, configuration and export UI |
+| `pad-lab.js` | Deterministic DFM and matrix scaling lab: canonical JSON, SHA-256 briefs, benchmarks and interactive SVG charts |
 | `index.html`, `style.css` | Accessible responsive workstation and theme system |
-| `test.js`, `ui-test.js` | Engine/export regressions and deterministic DOM interaction tests |
+| `test.js`, `drc-test.js` | Engine/export and design-rule regressions |
+| `ui-test.js`, `pad-lab.test.js` | Deterministic DOM interaction tests and the lab verification suite |
 
 ## License
 

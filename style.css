@@ -237,4 +237,73 @@ summary:hover { color: var(--copper); }
   .footer { padding: 12px 16px 24px; }
   .footer-links > span { margin-left: 0; }
 }
+/* ---- DFM and matrix scaling lab ------------------------------------ */
+.lab { grid-column: 1 / -1; min-width: 0; }
+.lab-status { font: 10px/1.6 var(--mono); color: var(--muted); margin: 0 0 14px; }
+.lab-status.ok { color: var(--ok); }
+.lab-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; }
+.lab-table { width: 100%; min-width: 760px; border-collapse: collapse; font: 10px/1.55 var(--mono); }
+.lab-table th { text-align: left; color: var(--muted); font-weight: 600; padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; background: var(--panel-inset); }
+.lab-table td { padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.lab-table tbody tr:last-child td { border-bottom: 0; }
+.lab-table tbody tr { cursor: pointer; }
+.lab-table tbody tr:hover td { background: var(--copper-dim); }
+.lab-table tbody tr.selected td { background: var(--copper-dim); color: var(--ink); }
+.lab-table tbody tr:focus-visible { outline: 3px solid var(--copper); outline-offset: -3px; }
+.lab-table .lab-name { color: var(--copper); font-weight: 600; }
+.lab-error-row td { color: var(--bad); }
+.lab-charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 18px 0; }
+.lab-fig { margin: 0; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 14px; background: var(--panel-inset); }
+.lab-fig-title { font-size: 12px; font-weight: 600; margin: 0 0 10px; }
+.lab-chart { min-width: 0; }
+.lab-chart .lab-svg { display: block; width: 100%; height: auto; }
+.lab-grid { stroke: var(--line); stroke-width: 1; }
+.lab-tick { fill: var(--muted); font: 9px var(--mono); }
+.lab-axis { fill: var(--ink); font: 10px var(--mono); }
+.lab-line { stroke-width: 1.4; opacity: .75; }
+.lab-line.mx { stroke: var(--copper); }
+.lab-line.choc { stroke: var(--back); }
+.lab-dot { fill: var(--copper); }
+.lab-dot.choc { fill: var(--back); }
+.lab-pt.mx .lab-dot { fill: var(--copper); }
+.lab-pt.choc .lab-dot { fill: var(--back); }
+.lab-pt { cursor: pointer; }
+.lab-pt:hover .lab-dot { stroke: var(--ink); stroke-width: 1.4; }
+.lab-pt.selected .lab-dot { stroke: var(--ink); stroke-width: 2; }
+.lab-pt:focus-visible { outline: none; }
+.lab-pt:focus-visible .lab-dot { stroke: var(--copper); stroke-width: 2.4; }
+.lab-pt-label { fill: var(--muted); font: 8.5px var(--mono); pointer-events: none; }
+.lab-legend text { fill: var(--muted); font: 9px var(--mono); }
+.lab-bar.s0 { fill: var(--copper); }
+.lab-bar.s1 { fill: var(--back); }
+.lab-bar.s2 { fill: var(--warn); }
+.lab-bar-val { fill: var(--muted); font: 8px var(--mono); }
+.lab-group { cursor: pointer; }
+.lab-group:focus-visible { outline: none; }
+.lab-group:focus-visible .lab-hit { stroke: var(--copper); stroke-width: 1.6; fill: rgba(0,0,0,0); }
+.lab-group:hover .lab-bar, .lab-group.selected .lab-bar { opacity: .85; }
+.lab-group.selected .lab-hit { stroke: var(--copper); stroke-width: 1.2; fill: rgba(0,0,0,0); }
+.lab-brief { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 6px; }
+.lab-digest { font: 10px/1.6 var(--mono); color: var(--muted); overflow-wrap: anywhere; margin: 0 0 12px; }
+.lab-digest.sealed { color: var(--ok); }
+.lab-brief .btn { padding: 9px 10px; font-size: 11px; }
+.lab-brief-result { font: 10px/1.6 var(--mono); color: var(--muted); margin: 10px 0 0; overflow-wrap: anywhere; }
+.lab-brief-result.ok { color: var(--ok); }
+.lab-brief-result.bad { color: var(--bad); }
+.lab-selftest { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 18px; }
+.lab-self-summary { font: 10px var(--mono); color: var(--muted); align-self: center; }
+.lab-self-summary.ok { color: var(--ok); }
+.lab-self-summary.bad { color: var(--bad); }
+.lab-self-list { margin: 12px 0 0; padding-left: 22px; font: 10px/1.7 var(--mono); }
+.lab-self-list li { margin-bottom: 4px; }
+.lab-self-list .lab-self-id { color: var(--copper); margin-right: 8px; }
+.lab-self-list .lab-self-label { color: var(--muted); margin-right: 8px; }
+.lab-self-list .badge { margin-left: 4px; }
+@media (max-width: 900px) {
+  .lab-charts { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 580px) {
+  .lab-table { min-width: 700px; }
+  .lab-brief .btn-row, .lab-selftest .btn-row { gap: 6px; }
+}
 @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .showcase { transition: none; } }
