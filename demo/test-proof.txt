@@ -1,0 +1,7 @@
+PadCraft - verification proof
+commit: 4bd44b8 (captured during scripts/record-demo.mjs)
+
+$ node --test test.js ui-test.js drc-test.js pad-lab.test.js
+  tests 489, pass 489, fail 0
+$ hark_honesty_and_defect_harness.py --audit <repo>
+  Audited 25 files in padcraft: 0 violation(s).

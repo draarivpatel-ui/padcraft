@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><title>PadCraft verification</title><style>
+*{box-sizing:border-box;margin:0}
+body{background:#0b1220;color:#e8eef8;font-family:"Avenir Next","Segoe UI","Helvetica Neue",Arial,sans-serif}
+main{max-width:1240px;margin:0 auto;padding:96px 60px}
+h1{font-family:Georgia,"Iowan Old Style","Times New Roman",serif;font-size:68px;font-weight:700;letter-spacing:-1px;margin-bottom:46px}
+.term{background:#111c2f;border:1px solid #2b3f5c;color:#d7e3f4;border-radius:16px;padding:36px 42px}
+.term span{display:block;font:21px/1.62 "SF Mono",ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap}
+.term .cmd{color:#4dd0c1;font-weight:700}
+.term .ok{color:#a9e8bb}
+</style></head><body><main>
+<h1>Verification</h1>
+<div class="term"><span>PadCraft - verification proof</span>
+<span>commit: 4bd44b8 (captured during scripts/record-demo.mjs)</span>
+<span> </span>
+<span class="cmd">$ node --test test.js ui-test.js drc-test.js pad-lab.test.js</span>
+<span class="ok">  tests 489, pass 489, fail 0</span>
+<span class="cmd">$ hark_honesty_and_defect_harness.py --audit &lt;repo&gt;</span>
+<span class="ok">  Audited 25 files in padcraft: 0 violation(s).</span>
+<span> </span></div>
+</main></body></html>

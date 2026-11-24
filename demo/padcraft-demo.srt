@@ -1,0 +1,67 @@
+1
+00:00:00,520 --> 00:00:10,004
+PadCraft is a browser engineering workstation that designs a complete R P twenty forty macropad from one normalized configuration.
+
+2
+00:00:10,174 --> 00:00:21,739
+The same model drives the circuit board, the switch plate, the enclosure source, every manufacturing layer and both firmware exports, entirely offline in one tab.
+
+3
+00:00:22,360 --> 00:00:25,970
+Four showcase designs ship with the workstation.
+
+4
+00:00:26,140 --> 00:00:38,226
+A twelve key studio controller, a six key sensor console with analog channels, a low profile pocket instrument, and a forty eight key stress test that maxes out the matrix.
+
+5
+00:00:38,395 --> 00:00:42,759
+One click regenerates every artifact for the chosen design.
+
+6
+00:00:43,379 --> 00:00:49,429
+Hover any pad to read its reference, net and drill size, and click to isolate that net.
+
+7
+00:00:49,599 --> 00:01:00,688
+Dashed airwires mark the controller and peripheral connections still to route in KiCad, while the meter counts connected pad groups against what remains.
+
+8
+00:01:00,858 --> 00:01:09,628
+Rows drive low and columns sense through a C O L two R O W matrix, with a diode per key and pins drawn from the legal G P I O pools.
+
+9
+00:01:10,248 --> 00:01:16,092
+Rows, columns, pitch, switch footprint and peripherals all flow into the exports.
+
+10
+00:01:16,262 --> 00:01:29,505
+The design rule audit checks pitch, enclosure, plate webs, the controller bay, drills, pin legality, keycodes, firmware polarity and copper clearance, and names every finding in the open.
+
+11
+00:01:30,125 --> 00:01:35,173
+The output panel lists twenty five portable artifacts for one design.
+
+12
+00:01:35,343 --> 00:01:51,105
+A KiCad eight board with resolved pad nets, seven Gerber layers, plated and non plated drill files, a watertight S T L plate, OpenSCAD source, K M K and Q M K firmware, a fingerprinted bill of materials and a sealed layout proof.
+
+13
+00:01:51,725 --> 00:01:58,410
+The D F M lab benchmarks the shipped presets and four stress matrices against the real engine.
+
+14
+00:01:58,580 --> 00:02:07,385
+Two charts plot the matrix scaling frontier and a manufacturing breakdown, and every row or marker loads that exact design.
+
+15
+00:02:07,555 --> 00:02:15,120
+A proof brief seals the design under one S H A 256 digest, checked by twenty four in page self tests.
+
+16
+00:02:15,740 --> 00:02:22,865
+Four hundred eighty nine Node tests pass with zero failures, re verified inside this recording run.
+
+17
+00:02:23,034 --> 00:02:28,115
+PadCraft. One design, every layer, built for people who build hardware.

@@ -1,0 +1,133 @@
+{
+ "voice": "OmniVoice-bf16 (Aariv voice clone)",
+ "seed": 1,
+ "sr": 24000,
+ "lead": 0.6,
+ "gap_sent": 0.3,
+ "gap_para": 0.75,
+ "tail": 1,
+ "total": 149.065,
+ "wav_seconds": 149.066,
+ "words": 341,
+ "sentences": [
+  {
+   "para": 0,
+   "sent": 0,
+   "text": "PadCraft is a browser engineering workstation that designs a complete R P twenty forty macropad from one normalized configuration.",
+   "dur": 9.354,
+   "start": 0.6
+  },
+  {
+   "para": 0,
+   "sent": 1,
+   "text": "The same model drives the circuit board, the switch plate, the enclosure source, every manufacturing layer and both firmware exports, entirely offline in one tab.",
+   "dur": 11.435,
+   "start": 10.254
+  },
+  {
+   "para": 1,
+   "sent": 0,
+   "text": "Four showcase designs ship with the workstation.",
+   "dur": 3.48,
+   "start": 22.44
+  },
+  {
+   "para": 1,
+   "sent": 1,
+   "text": "A twelve key studio controller, a six key sensor console with analog channels, a low profile pocket instrument, and a forty eight key stress test that maxes out the matrix.",
+   "dur": 11.956,
+   "start": 26.22
+  },
+  {
+   "para": 1,
+   "sent": 2,
+   "text": "One click regenerates every artifact for the chosen design.",
+   "dur": 4.234,
+   "start": 38.475
+  },
+  {
+   "para": 2,
+   "sent": 0,
+   "text": "Hover any pad to read its reference, net and drill size, and click to isolate that net.",
+   "dur": 5.92,
+   "start": 43.459
+  },
+  {
+   "para": 2,
+   "sent": 1,
+   "text": "Dashed airwires mark the controller and peripheral connections still to route in KiCad, while the meter counts connected pad groups against what remains.",
+   "dur": 10.959,
+   "start": 49.679
+  },
+  {
+   "para": 2,
+   "sent": 2,
+   "text": "Rows drive low and columns sense through a C O L two R O W matrix, with a diode per key and pins drawn from the legal G P I O pools.",
+   "dur": 8.64,
+   "start": 60.938
+  },
+  {
+   "para": 3,
+   "sent": 0,
+   "text": "Rows, columns, pitch, switch footprint and peripherals all flow into the exports.",
+   "dur": 5.714,
+   "start": 70.328
+  },
+  {
+   "para": 3,
+   "sent": 1,
+   "text": "The design rule audit checks pitch, enclosure, plate webs, the controller bay, drills, pin legality, keycodes, firmware polarity and copper clearance, and names every finding in the open.",
+   "dur": 13.113,
+   "start": 76.342
+  },
+  {
+   "para": 4,
+   "sent": 0,
+   "text": "The output panel lists twenty five portable artifacts for one design.",
+   "dur": 4.918,
+   "start": 90.205
+  },
+  {
+   "para": 4,
+   "sent": 1,
+   "text": "A KiCad eight board with resolved pad nets, seven Gerber layers, plated and non plated drill files, a watertight S T L plate, OpenSCAD source, K M K and Q M K firmware, a fingerprinted bill of materials and a sealed layout proof.",
+   "dur": 15.632,
+   "start": 95.423
+  },
+  {
+   "para": 5,
+   "sent": 0,
+   "text": "The D F M lab benchmarks the shipped presets and four stress matrices against the real engine.",
+   "dur": 6.555,
+   "start": 111.805
+  },
+  {
+   "para": 5,
+   "sent": 1,
+   "text": "Two charts plot the matrix scaling frontier and a manufacturing breakdown, and every row or marker loads that exact design.",
+   "dur": 8.675,
+   "start": 118.66
+  },
+  {
+   "para": 5,
+   "sent": 2,
+   "text": "A proof brief seals the design under one S H A 256 digest, checked by twenty four in page self tests.",
+   "dur": 7.435,
+   "start": 127.635
+  },
+  {
+   "para": 6,
+   "sent": 0,
+   "text": "Four hundred eighty nine Node tests pass with zero failures, re verified inside this recording run.",
+   "dur": 6.995,
+   "start": 135.82
+  },
+  {
+   "para": 6,
+   "sent": 1,
+   "text": "PadCraft. One design, every layer, built for people who build hardware.",
+   "dur": 4.951,
+   "start": 143.114
+  }
+ ]
+}

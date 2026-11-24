@@ -1,0 +1,23 @@
+PadCraft is a browser engineering workstation that designs a complete R P twenty forty macropad from one normalized configuration.
+The same model drives the circuit board, the switch plate, the enclosure source, every manufacturing layer and both firmware exports, entirely offline in one tab.
+
+Four showcase designs ship with the workstation.
+A twelve key studio controller, a six key sensor console with analog channels, a low profile pocket instrument, and a forty eight key stress test that maxes out the matrix.
+One click regenerates every artifact for the chosen design.
+
+Hover any pad to read its reference, net and drill size, and click to isolate that net.
+Dashed airwires mark the controller and peripheral connections still to route in KiCad, while the meter counts connected pad groups against what remains.
+Rows drive low and columns sense through a C O L two R O W matrix, with a diode per key and pins drawn from the legal G P I O pools.
+
+Rows, columns, pitch, switch footprint and peripherals all flow into the exports.
+The design rule audit checks pitch, enclosure, plate webs, the controller bay, drills, pin legality, keycodes, firmware polarity and copper clearance, and names every finding in the open.
+
+The output panel lists twenty five portable artifacts for one design.
+A KiCad eight board with resolved pad nets, seven Gerber layers, plated and non plated drill files, a watertight S T L plate, OpenSCAD source, K M K and Q M K firmware, a fingerprinted bill of materials and a sealed layout proof.
+
+The D F M lab benchmarks the shipped presets and four stress matrices against the real engine.
+Two charts plot the matrix scaling frontier and a manufacturing breakdown, and every row or marker loads that exact design.
+A proof brief seals the design under one S H A 256 digest, checked by twenty four in page self tests.
+
+Four hundred eighty nine Node tests pass with zero failures, re verified inside this recording run.
+PadCraft. One design, every layer, built for people who build hardware.
