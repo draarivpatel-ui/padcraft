@@ -6,11 +6,11 @@ A custom macropad should be a small hardware project, yet its decisions spread a
 
 ## What it does
 
-PadCraft turns a key matrix into 21 coherent design artifacts entirely in the browser. It produces a KiCad 8 board, seven Gerber layers, separate plated and non-plated Excellon operations, a closed STL switch plate, a parameterized OpenSCAD tray, KMK firmware and a complete QMK directory tree.
+PadCraft turns a key matrix into 25 coherent design artifacts entirely in the browser. It produces a KiCad 8 board, seven Gerber layers, separate plated and non-plated Excellon operations, a closed STL switch plate, a parameterized OpenSCAD tray, KMK firmware and a complete QMK directory tree.
 
 Four showcase buttons make the design tangible immediately: a studio controller, a sensor console, a pocket instrument and a 48-key stress test. Judges can hover a copper pad to inspect its net and dimensions, click it to isolate the signal, edit shortcuts and watch both firmware sources change. Keyboard inspection, light and dark themes, compact advanced controls and an export source viewer make the tool usable without an explanation from its author.
 
-The interface also tells the truth about engineering progress. A connectivity graph draws the controller and peripheral airwires still to route. Export schema checks and a closed mesh badge are separate from the unfinished routing work.
+The interface also tells the truth about engineering progress. A connectivity graph draws the controller and peripheral airwires still to route. Export schema checks and a closed mesh badge are separate from the unfinished routing work. A deterministic DFM and matrix scaling lab benchmarks the shipped presets, plots GPIO use against board area and seals its proof brief with one digest across the page, JSON, CSV and Markdown exports.
 
 ## How we built it
 
@@ -37,22 +37,22 @@ Firmware and UI had their own boundary failures. QMK numeric keycodes and traili
 - Encoder slots and every mounting hole appear in explicit plated or non-plated drill files.
 - The maximum showcase generates 48 keys, 105 KiCad footprints, 396 KiCad pad instances, 300 drill/slot operations and 4,752 closed STL triangles.
 - Every shipped scenario passes the export round trips and generated copper geometry checks while retaining an honest count of routes to finish.
-- All controls, imports, downloads and interactive inspection features are exercised against the shipped scripts and HTML.
+- All workstation and audit-lab controls, imports, downloads and interactive inspection features are exercised against the shipped scripts and HTML.
 
 ## Verification numbers
 
-Verified on Node v24.16.0 with:
+Verified on Node v26.8.1 with:
 
 ```sh
-node --test test.js ui-test.js
+npm test
 ```
 
-**111 passed, 0 failed, 0 skipped.** The suite comprises 88 engine/export/CLI tests and 23 ZIP/HTML/DOM checks.
+**489 passed, 0 failed, 0 skipped.** The suite comprises 90 engine, export, geometry, firmware and CLI tests, 88 design rule and audit regressions, 30 ZIP, HTML and DOM behavior tests, and 281 lab verification tests.
 
 | Verification | Observed result |
 | --- | --- |
 | One-click scenarios | 4, all export checks pass |
-| Source artifacts per scenario | 21 |
+| Source artifacts per scenario | 25 |
 | Gerber layers per scenario | 7 |
 | Drill files per scenario | 2, plating separated |
 | Matrix geometry sweep | 48 configurations, closed meshes and valid generated copper geometry |

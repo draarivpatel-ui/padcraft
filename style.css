@@ -164,7 +164,7 @@ summary:hover { color: var(--copper); }
 .file-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin: 18px 0; }
 .file-btn { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--ink); background: var(--panel-inset); border: 1px solid var(--line); border-radius: 6px; padding: 11px; text-align: left; min-width: 0; }
 .file-btn:hover { border-color: var(--copper); }
-.file-name { font: 9px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-name { font: 9px var(--mono); min-width: 0; overflow-wrap: anywhere; }
 .file-size { color: var(--muted); font: 9px var(--mono); flex-shrink: 0; }
 .code-block { border-top: 1px solid var(--line); }
 .code-head { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 8px 0 12px; }
