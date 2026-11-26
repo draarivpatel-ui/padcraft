@@ -107,14 +107,14 @@ npm test
 
 which runs `node --test --test-reporter=spec test.js ui-test.js drc-test.js pad-lab.test.js`.
 
-Verified on Node **v26.8.1**: **489 tests passed, 0 failed, 0 skipped**.
+Verified on Node **v26.8.1**: **491 tests passed, 0 failed, 0 skipped**.
 
 The suite includes:
 
-- 90 engine, export, geometry, firmware and CLI tests.
+- 91 engine, export, geometry, firmware and CLI tests.
 - 88 design rule and audit regression tests across the full legal configuration space.
 - 30 ZIP, shipped HTML syntax and DOM behavior tests, including every configuration field, four presets, imports, downloads, keyboard inspection, net isolation, themes, resize and failure recovery.
-- 281 lab tests: SHA-256 known answers and a 0 to 160 byte boundary sweep against Node `crypto`, canonical-JSON ordering, cycle and depth bounds, hostile `#pclab=` and `__proto__` fuzz, CSV formula escaping, digest parity and tamper rejection, preset and matrix sweep invariants against the real engine, ZIP CRC32 verification and fixture-DOM wiring of every lab control.
+- 282 lab tests: SHA-256 known answers and a 0 to 160 byte boundary sweep against Node `crypto`, canonical-JSON ordering, cycle and depth bounds, hostile `#pclab=` and `__proto__` fuzz, CSV formula escaping, digest parity and tamper rejection, preset and matrix sweep invariants against the real engine, ZIP CRC32 verification and fixture-DOM wiring of every lab control.
 - A 48-configuration geometry sweep covering every supported matrix size at minimum pitch and margin, with mixed MX/Choc switches and all peripherals.
 - A 20-board KiCad matrix sweep, required sections, pad/net correspondence, duplicate references, numeric geometry and unique identifiers.
 - Actual emitted STL parsing, opposite edge incidence, positive signed volume and independent polygon-area volume comparison.

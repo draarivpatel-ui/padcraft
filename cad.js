@@ -2320,7 +2320,8 @@ function buildBom(config) {
 
 function buildBomCsv(bom) {
   const escape = value => {
-    const s = String(value);
+    let s = String(value);
+    if (/^[\s\u0085\u180E\u200B\u200C\u200D\u2060\uFEFF]*[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   };
   const rows = bom.items.map(item =>

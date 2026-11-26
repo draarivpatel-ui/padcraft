@@ -1047,3 +1047,11 @@ test('scadMountPoints preserves equal-length string literals while ignoring comm
     [[1, 2]]
   );
 });
+
+test('BOM CSV neutralizes formula triggers behind whitespace and invisible Unicode', () => {
+  const csv = pc.buildBomCsv({ schema: 'test', design: 'd', fingerprint: 'f', items: [
+    { line: 1, category: 'part', refs: ['R1'], qty: 1, value: '\u200B=cmd', footprint: 'x', notes: ' \t+H2O' }
+  ] });
+  assert.ok(csv.includes("'\u200B=cmd"), csv);
+  assert.ok(csv.includes("' \t+H2O"), csv);
+});

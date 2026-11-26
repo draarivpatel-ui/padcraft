@@ -186,7 +186,7 @@
 
   function csvField(value) {
     let s = value === undefined || value === null ? '' : String(value);
-    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+    if (/^[\s\u0085\u180E\u200B\u200C\u200D\u2060\uFEFF]*[=+\-@\t\r]/.test(s)) s = "'" + s;
     return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
   }
 

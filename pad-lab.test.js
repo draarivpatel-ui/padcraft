@@ -760,3 +760,9 @@ test('mount: the self-test runner reports every check passing', async () => {
   const list = all.find(e => e._classes && e._classes.has('lab-self-list'));
   assert.equal(list.children.length, selfResults.length);
 });
+
+test('csvField neutralizes formula triggers behind whitespace and invisible Unicode', () => {
+  [' ', '\t', '\u00A0', '\u200B', '\uFEFF'].forEach(function (lead) {
+    assert.equal(lab.csvField(lead + '=cmd'), "'" + lead + '=cmd');
+  });
+});
