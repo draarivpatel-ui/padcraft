@@ -867,7 +867,6 @@
       tr.tabIndex = 0;
       tr.setAttribute('role', 'button');
       tr.setAttribute('aria-pressed', 'false');
-      tr.setAttribute('aria-label', 'Load ' + spec.label + ' into the workstation');
       const cells = [
         spec.label,
         m.rows + 'x' + m.cols,
@@ -957,7 +956,7 @@
       const yMax = niceCeil(Math.max(...all.map(p => p.gpioPct)) * 100 * 1.12, 5);
       const X = v => m.l + (v / xMax) * plotW;
       const Y = v => m.t + plotH - (v / yMax) * plotH;
-      const svg = mk('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'lab-svg', role: 'img',
+      const svg = mk('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'lab-svg', role: 'group',
         'aria-label': 'Board area against RP2040 GPIO utilization for MX and Choc matrices' }, chart1);
 
       for (const t of axisTicks(0, yMax, 5).ticks) {
@@ -990,7 +989,7 @@
           const g = mk('g', { class: 'lab-pt ' + (s.switchType === 'MX' ? 'mx' : 'choc'), tabindex: '0',
             role: 'button', 'aria-label': p.rows + ' by ' + p.cols + ' ' + s.switchType +
               ', ' + p.areaCm2 + ' cm2, ' + Math.round(p.gpioPct * 100) + '% GPIO' }, svg);
-          mk('circle', { cx: px, cy: py, r: 11, class: 'lab-hit', fill: 'rgba(0,0,0,0)', 'pointer-events': 'all' }, g);
+          mk('circle', { cx: px, cy: py, r: 23, class: 'lab-hit', fill: 'rgba(0,0,0,0)', 'pointer-events': 'all' }, g);
           mk('circle', { cx: px, cy: py, r: 4, class: 'lab-dot' }, g);
           const sel = { kind: 'matrix', rows: p.rows, cols: p.cols, switchType: s.switchType, encoder: false, sensor: false };
           const pick = () => applySelection(sel);
@@ -1037,7 +1036,7 @@
       const maxes = series.map(s => Math.max(1, ...rows.map(r => s.get(r))));
       const Y = (v, si) => m.t + plotH - (v / maxes[si]) * plotH;
       const gw = plotW / rows.length;
-      const svg = mk('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'lab-svg', role: 'img',
+      const svg = mk('svg', { viewBox: '0 0 ' + W + ' ' + H, class: 'lab-svg', role: 'group',
         'aria-label': 'Drill operations, plate volume and remaining routes per benchmarked design' }, chart2);
 
       for (const t of axisTicks(0, 100, 4).ticks) {
@@ -1053,8 +1052,9 @@
       const barW = Math.min(18, (gw - 14) / series.length - 2);
       rows.forEach((row, gi) => {
         const gx = m.l + gi * gw;
+        const visibleName = series.map((s) => String(s.get(row))).join(' ') + ' ' + row.id;
         const g = mk('g', { class: 'lab-group', tabindex: '0', role: 'button',
-          'aria-label': 'Load ' + row.label + ' into the workstation' }, svg);
+          'aria-label': visibleName + ', load ' + row.label + ' into the workstation' }, svg);
         mk('rect', { x: gx, y: m.t, width: gw, height: plotH, class: 'lab-hit',
           fill: 'rgba(0,0,0,0)', 'pointer-events': 'all' }, g);
         series.forEach((s, si) => {
@@ -1065,7 +1065,7 @@
           mk('rect', { x: bx, y: by, width: bw, height: Math.max(0.5, m.t + plotH - by),
             class: 'lab-bar s' + si }, g);
           const lbl = mk('text', { x: bx + bw / 2, y: by - 4, class: 'lab-bar-val', 'text-anchor': 'middle' }, g);
-          lbl.textContent = v;
+          lbl.textContent = v + ' ';
         });
         const lbl = mk('text', { x: gx + gw / 2, y: H - m.b + 16 + (gi % 2) * 12, class: 'lab-tick',
           'text-anchor': 'middle' }, g);
